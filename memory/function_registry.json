@@ -54,5 +54,16 @@
   },
   "last_updated": "2025-07-03T18:46:10.398855",
   "version": "2.0",
-  "total_functions": 2
+  "total_functions": 2,
+  "test_function": {
+    "name": "test_function",
+    "code": "\ndef test_function(x: int) -> int:\n    \"\"\"Test function.\"\"\"\n    return x * 2\n",
+    "description": "Test function for parameter naming",
+    "task_origin": "test_fixes_validation",
+    "test_cases": [],
+    "hash": "95200e4c47a69aba5de52d63f35c5d63",
+    "created_at": "2025-07-04T15:15:51.887353",
+    "updated_at": "2025-07-04T15:15:51.887353",
+    "version": 1
+  }
 }

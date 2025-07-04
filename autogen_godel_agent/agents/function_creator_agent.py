@@ -4,6 +4,54 @@ Function Creator Agent for Self-Expanding Agent System.
 This agent generates new Python functions based on specifications,
 tests them, and registers them if they pass validation.
 提供自动生成、验证、测试、注册 Python 函数的能力。
+
+TODO:考虑以下几个方向继续增强系统：
+
+1. ✅ 支持函数重试机制 / 自我修复能力
+当前失败会直接返回，可新增 retry loop 或 error修复尝试：
+
+# 在 create_function 中加入：
+for attempt in range(self.max_attempts):
+    ...
+    if success:
+        return ...
+    else:
+        logger.warning(f"Attempt {attempt+1} failed. Retrying with modified prompt...")
+2. ✅ 保存中间产物用于审计和调试
+比如保存生成的函数代码、测试用例、测试日志等，以供开发者或 LLM 后续学习改进。
+
+可加入持久化机制（写入 JSON/DB），比如：
+
+self._save_to_audit_log(func_name, code, test_cases, test_result)
+3. ✅ 函数调用链构建支持（FunctionComposer 对接）
+为自我扩展系统的下一步（函数组合）做准备，可以支持：
+
+get_signature(func_code) 提取参数签名
+
+get_return_type(func_code) 推断返回值类型
+
+未来支持函数链组装的元信息抽取
+
+4. ✅ 加强安全策略
+当前禁止了 os, sys, subprocess, eval, exec 等，但建议引入更强的代码沙箱，例如：
+
+限制运行时间（timeout）
+
+限制最大内存
+
+使用 subprocess + seccomp / docker sandbox 隔离执行（可选）
+
+5. ✅ 支持注册后自动生成 API/文档
+每当注册一个函数，可以自动生成：
+
+RESTful API 或 LangChain tool wrapper
+
+Markdown 文档或 OpenAPI schema 片段
+
+6. ✅ 加入评估和反馈机制
+为每个生成的函数打分，或者使用 LLM 再次评估其质量，如：
+
+evaluate_code_quality(code: str) -> {"score": 4.3, "issues": [...]}
 """
 
 import autogen
@@ -64,6 +112,9 @@ class FunctionCreatorAgent:
         self.llm_config = llm_config
         self.function_tools = function_tools or get_function_tools()
         self.max_attempts = 3
+
+        # Performance optimization: Cache validation results to avoid duplicate work
+        self._validation_cache = {}
 
         # Validate function_tools interface
         self._validate_function_tools_interface()
@@ -162,11 +213,15 @@ Always validate and test functions before attempting to register them."""
             else:
                 normalized_test_cases = []
 
-            # Use TestResult structure for better error handling
+            # Use TestResult structure for better error handling with fallback
             result_tuple = self.function_tools.test_function_with_cases(
                 code, func_name, normalized_test_cases
             )
-            test_result = TestResult.from_tuple(result_tuple)
+            try:
+                test_result = TestResult.from_tuple(result_tuple)
+            except Exception as e:
+                logger.warning(f"Failed to parse TestResult, using fallback: {e}")
+                test_result = TestResult(success=False, error_msg=f"Result parsing error: {e}", test_results=[])
 
             if test_result.success:
                 response = f"✅ All tests passed for {func_name}!\n\n"
@@ -263,14 +318,14 @@ Always validate and test functions before attempting to register them."""
                 message=prompt
             )
 
-            # Extract the generated code from the conversation
-            messages = user_proxy.chat_messages[self.agent]
+            # Extract the generated code from the conversation with error handling
+            messages = user_proxy.chat_messages.get(self.agent, [])
             if messages:
                 # Look for the first message with function code (not the last one)
                 code = None
                 for message in messages:
                     content = message['content']
-                    extracted_code = self._extract_code_from_response(content)
+                    extracted_code = self._extract_code_from_response(content, func_name)
                     if extracted_code and 'def ' in extracted_code:
                         code = extracted_code
                         break
@@ -278,7 +333,7 @@ Always validate and test functions before attempting to register them."""
                 if not code:
                     # Fallback to last message
                     last_message = messages[-1]['content']
-                    code = self._extract_code_from_response(last_message)
+                    code = self._extract_code_from_response(last_message, func_name)
 
                 if code:
                     logger.debug(f"Code extracted successfully for {func_name}")
@@ -293,19 +348,23 @@ Always validate and test functions before attempting to register them."""
                         test_cases = self.function_tools.generate_test_cases(extracted_name, code, description)
                         logger.debug(f"Generated {len(test_cases)} test cases for {extracted_name}")
 
-                        # Test the function using TestResult structure
+                        # Test the function using TestResult structure with fallback
                         result_tuple = self.function_tools.test_function_with_cases(code, extracted_name, test_cases)
-                        test_result = TestResult.from_tuple(result_tuple)
+                        try:
+                            test_result = TestResult.from_tuple(result_tuple)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse TestResult, using fallback: {e}")
+                            test_result = TestResult(success=False, error_msg=f"Result parsing error: {e}", test_results=[])
 
                         if test_result.success:
                             logger.info(f"Function testing passed for {extracted_name}")
 
                             # Register the function with unified parameter naming
                             register_success = self.function_tools.register_function(
-                                name=extracted_name,  # Unified parameter naming
-                                code=code,
+                                func_name=extracted_name,  # Fixed: use func_name for consistency
+                                func_code=code,
                                 description=description,
-                                origin=f"Auto-generated for: {description}",
+                                task_origin=f"Auto-generated for: {description}",
                                 test_cases=test_cases
                             )
 
@@ -372,8 +431,8 @@ Always validate and test functions before attempting to register them."""
 
         logger.info("Function tools interface validation completed")
 
-    def _extract_code_from_response(self, response: str) -> Optional[str]:
-        """Extract Python code from LLM response with performance optimization."""
+    def _extract_code_from_response(self, response: str, expected_func_name: str = None) -> Optional[str]:
+        """Extract Python code from LLM response with performance optimization and function name validation."""
         # Performance optimization: Pre-filter with regex before AST parsing
         if not re.search(r'\bdef\s+\w+\s*\(', response):
             logger.debug("No function definition pattern found in response")
@@ -382,10 +441,19 @@ Always validate and test functions before attempting to register them."""
         # Step 1: Extract all code blocks
         all_code_blocks = self._extract_all_code_blocks(response)
 
-        # Step 2: Find the first valid function definition
+        # Step 2: Find the first valid function definition, preferring expected function name
+        best_match = None
         for code_block in all_code_blocks:
             if self._is_valid_function_code(code_block):
-                return self._clean_code_block(code_block)
+                # If we have an expected function name, prioritize blocks containing it
+                if expected_func_name and f"def {expected_func_name}" in code_block:
+                    return self._clean_code_block(code_block)
+                # Keep the first valid block as fallback
+                if best_match is None:
+                    best_match = code_block
+
+        if best_match:
+            return self._clean_code_block(best_match)
 
         # Step 3: Fallback to line-by-line extraction if no code blocks found
         if not all_code_blocks:
@@ -399,12 +467,12 @@ Always validate and test functions before attempting to register them."""
         """Extract all code blocks from response with enhanced patterns."""
         code_blocks = []
 
-        # Pattern 1: ```python ... ``` (flexible whitespace)
-        python_blocks = re.findall(r'```python\s+(.*?)```', response, re.DOTALL)
+        # Pattern 1: ```python ... ``` (improved whitespace handling)
+        python_blocks = re.findall(r'```python\s*\n(.*?)```', response, re.DOTALL)
         code_blocks.extend([block.strip() for block in python_blocks])
 
-        # Pattern 2: ``` ... ``` (without language specification, flexible whitespace)
-        generic_blocks = re.findall(r'```\s+(.*?)```', response, re.DOTALL)
+        # Pattern 2: ``` ... ``` (without language specification, improved whitespace handling)
+        generic_blocks = re.findall(r'```\s*\n(.*?)```', response, re.DOTALL)
         code_blocks.extend([block.strip() for block in generic_blocks])
 
         # Remove duplicates while preserving order
@@ -448,12 +516,19 @@ Always validate and test functions before attempting to register them."""
         return cleaned_code
 
     def _is_valid_function_code(self, code: str) -> bool:
-        """Check if code contains a valid function definition with enhanced security."""
+        """Check if code contains a valid function definition with enhanced security and caching."""
+        # Performance optimization: Check cache first
+        code_hash = hash(code)
+        if code_hash in self._validation_cache:
+            return self._validation_cache[code_hash]
+
         if not code.strip() or 'function_name' in code or 'param: type' in code:
+            self._validation_cache[code_hash] = False
             return False
 
         # Performance optimization: Quick regex check before AST parsing
         if not re.search(r'\bdef\s+\w+\s*\(', code):
+            self._validation_cache[code_hash] = False
             return False
 
         # Use AST to validate the code structure and security
@@ -463,17 +538,21 @@ Always validate and test functions before attempting to register them."""
             # Check if there's at least one function definition
             func_defs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
             if len(func_defs) == 0:
+                self._validation_cache[code_hash] = False
                 return False
 
             # Enhanced security validation using function_tools
             is_valid, status_msg, _ = self.function_tools.validate_function_code(code)
             if not is_valid:
                 logger.warning(f"Security validation failed: {status_msg}")
+                self._validation_cache[code_hash] = False
                 return False
 
+            self._validation_cache[code_hash] = True
             return True
         except (SyntaxError, ValueError) as e:
             logger.debug(f"Code validation failed: {e}")
+            self._validation_cache[code_hash] = False
             return False
 
     def _extract_code_from_lines(self, response: str) -> Optional[str]:
@@ -550,12 +629,13 @@ Examples:
 Requirements:
 1. Write a complete, working Python function
 2. Include proper type hints for parameters and return value
-3. Include a comprehensive docstring with description, parameters, and return value
-4. Handle edge cases and potential errors appropriately
-5. Use only safe, standard Python libraries (no file I/O, no system calls)
-6. Make the function robust and well-tested
-7. Avoid any dangerous operations or imports
-8. Include comprehensive error handling
+3. The function MUST return a value of type {return_type}
+4. Include a comprehensive docstring with description, parameters, and return value
+5. Handle edge cases and potential errors appropriately
+6. Use only safe, standard Python libraries (no file I/O, no system calls)
+7. Make the function robust and well-tested
+8. Avoid any dangerous operations or imports
+9. Include comprehensive error handling
 
 Please provide ONLY the Python function code, wrapped in ```python``` code blocks."""
 
