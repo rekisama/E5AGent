@@ -20,18 +20,12 @@ get_function_info(name)
 """
 
 import autogen
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 import sys
 import os
-import re
-import json
 import logging
 import time
-import threading
-from contextlib import contextmanager
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-import uuid
+from datetime import datetime
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -40,82 +34,9 @@ logger = logging.getLogger(__name__)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.function_tools import get_function_tools
-
-
-@dataclass
-class TokenUsageStats:
-    """Track token usage and API call statistics."""
-    total_tokens: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    api_calls: int = 0
-    start_time: datetime = field(default_factory=datetime.now)
-    last_call_time: Optional[datetime] = None
-
-    def add_usage(self, prompt_tokens: int, completion_tokens: int):
-        """Add token usage from an API call."""
-        self.prompt_tokens += prompt_tokens
-        self.completion_tokens += completion_tokens
-        self.total_tokens += (prompt_tokens + completion_tokens)
-        self.api_calls += 1
-        self.last_call_time = datetime.now()
-
-    def get_rate_per_minute(self) -> float:
-        """Calculate API calls per minute."""
-        if self.api_calls == 0:
-            return 0.0
-        elapsed = (datetime.now() - self.start_time).total_seconds() / 60
-        return self.api_calls / max(elapsed, 1.0)
-
-
-@dataclass
-class SessionContext:
-    """Isolated session context for multi-task scenarios."""
-    session_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    created_at: datetime = field(default_factory=datetime.now)
-    messages: List[Dict[str, Any]] = field(default_factory=list)
-    token_usage: TokenUsageStats = field(default_factory=TokenUsageStats)
-
-    def clear_messages(self):
-        """Clear session messages."""
-        self.messages.clear()
-
-
-class UserProxyPool:
-    """Pool of UserProxyAgent instances for reuse."""
-
-    def __init__(self, max_size: int = 5):
-        self.max_size = max_size
-        self._pool: List[autogen.UserProxyAgent] = []
-        self._lock = threading.Lock()
-
-    @contextmanager
-    def get_user_proxy(self):
-        """Get a UserProxyAgent from the pool as a context manager."""
-        proxy = None
-        try:
-            with self._lock:
-                if self._pool:
-                    proxy = self._pool.pop()
-                else:
-                    proxy = autogen.UserProxyAgent(
-                        name=f"temp_user_{uuid.uuid4().hex[:8]}",
-                        human_input_mode="NEVER",
-                        max_consecutive_auto_reply=1,
-                        code_execution_config=False,
-                    )
-
-            # Clear any existing messages
-            proxy.chat_messages.clear()
-            yield proxy
-
-        finally:
-            if proxy:
-                # Clean up and return to pool
-                proxy.chat_messages.clear()
-                with self._lock:
-                    if len(self._pool) < self.max_size:
-                        self._pool.append(proxy)
+from tools.session_manager import get_session_manager
+from tools.response_parser import get_response_parser
+from tools.agent_pool import get_user_proxy_pool
 
 
 class TaskPlannerAgent:
@@ -134,14 +55,10 @@ class TaskPlannerAgent:
         self.function_tools = get_function_tools()
         self.max_tokens_per_minute = max_tokens_per_minute
 
-        # Initialize pools and tracking
-        self.user_proxy_pool = UserProxyPool()
-        self.sessions: Dict[str, SessionContext] = {}
-        self.global_token_usage = TokenUsageStats()
-
-        # Rate limiting
-        self._last_api_call = 0.0
-        self._min_interval = 1.0  # Minimum seconds between API calls
+        # Initialize modular components
+        self.session_manager = get_session_manager(max_tokens_per_minute)
+        self.response_parser = get_response_parser()
+        self.user_proxy_pool = get_user_proxy_pool()
         
         # Define the system message for the planner agent
         system_message = """# Task Planner Agent
@@ -319,15 +236,14 @@ Examples: "email validation" → "validation" → "check"
         """
         # Create or get session context
         if session_id is None:
-            session_id = str(uuid.uuid4())
+            session_id = self.session_manager.create_session()
+        elif not self.session_manager.get_session(session_id):
+            session_id = self.session_manager.create_session(session_id)
 
-        if session_id not in self.sessions:
-            self.sessions[session_id] = SessionContext(session_id=session_id)
-
-        session = self.sessions[session_id]
+        session = self.session_manager.get_session(session_id)
 
         # Rate limiting check
-        self._enforce_rate_limit()
+        self.session_manager.enforce_rate_limit()
 
         # Create a comprehensive prompt for the LLM
         analysis_prompt = f"""# TASK: {task_description}
@@ -366,11 +282,8 @@ The JSON must be wrapped in ```json code blocks and be valid JSON."""
                 estimated_prompt_tokens = len(analysis_prompt.split()) * 1.3  # Rough estimate
                 estimated_completion_tokens = len(llm_response.split()) * 1.3
 
-                session.token_usage.add_usage(
-                    int(estimated_prompt_tokens),
-                    int(estimated_completion_tokens)
-                )
-                self.global_token_usage.add_usage(
+                self.session_manager.add_token_usage(
+                    session_id,
                     int(estimated_prompt_tokens),
                     int(estimated_completion_tokens)
                 )
@@ -379,10 +292,10 @@ The JSON must be wrapped in ```json code blocks and be valid JSON."""
                            f"estimated tokens: {int(estimated_prompt_tokens + estimated_completion_tokens)}")
 
             # Parse the response to extract structured information
-            analysis_result = self._parse_llm_analysis(llm_response, task_description)
+            analysis_result = self.response_parser.parse_llm_analysis(llm_response, task_description)
 
             # Store in session context
-            session.messages.append({
+            session.add_message({
                 'task': task_description,
                 'response': llm_response,
                 'analysis': analysis_result,
@@ -406,463 +319,16 @@ The JSON must be wrapped in ```json code blocks and be valid JSON."""
                 'session_id': session_id
             }
 
-    def _enforce_rate_limit(self):
-        """Enforce rate limiting between API calls."""
-        current_time = time.time()
-        time_since_last_call = current_time - self._last_api_call
-
-        if time_since_last_call < self._min_interval:
-            sleep_time = self._min_interval - time_since_last_call
-            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f}s")
-            time.sleep(sleep_time)
-
-        self._last_api_call = time.time()
-
-        # Check token usage rate
-        rate = self.global_token_usage.get_rate_per_minute()
-        if rate > self.max_tokens_per_minute / 60:  # Convert to per-second rate
-            logger.warning(f"High token usage rate: {rate:.2f} tokens/min")
-
     def get_session_stats(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Get statistics for a specific session."""
-        if session_id not in self.sessions:
-            return None
-
-        session = self.sessions[session_id]
-        return {
-            'session_id': session_id,
-            'created_at': session.created_at,
-            'message_count': len(session.messages),
-            'token_usage': {
-                'total_tokens': session.token_usage.total_tokens,
-                'api_calls': session.token_usage.api_calls,
-                'rate_per_minute': session.token_usage.get_rate_per_minute()
-            }
-        }
+        return self.session_manager.get_session_stats(session_id)
 
     def cleanup_old_sessions(self, max_age_hours: int = 24):
         """Clean up old sessions to prevent memory leaks."""
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
-        old_sessions = [
-            sid for sid, session in self.sessions.items()
-            if session.created_at < cutoff_time
-        ]
-
-        for sid in old_sessions:
-            del self.sessions[sid]
-
-        if old_sessions:
-            logger.info(f"Cleaned up {len(old_sessions)} old sessions")
+        return self.session_manager.cleanup_old_sessions(max_age_hours)
     
-    def _parse_llm_analysis(self, llm_response: str, task_description: str) -> Dict[str, Any]:
-        """
-        Parse the LLM's analysis response into structured data.
 
-        First tries to parse as JSON, falls back to regex-based parsing.
 
-        Args:
-            llm_response: The LLM's analysis response
-            task_description: Original task description
 
-        Returns:
-            Structured analysis result
-        """
-        import json
 
-        # Initialize default result structure
-        default_result = {
-            'task': task_description,
-            'status': 'success',
-            'llm_response': llm_response,
-            'function_found': False,
-            'matched_functions': [],
-            'needs_new_function': False,
-            'suggested_function_spec': None,
-            'reasoning': None
-        }
 
-        # Try to parse as JSON first (preferred method)
-        try:
-            # Multiple JSON extraction strategies
-            json_str = self._extract_json_from_response(llm_response)
-            if not json_str:
-                raise ValueError("No JSON found in response")
-
-            parsed_json = json.loads(json_str)
-
-            # Schema validation and structure completion
-            result = self._validate_and_complete_json_structure(parsed_json, default_result)
-            return result
-
-        except (json.JSONDecodeError, ValueError, KeyError) as e:
-            # Fallback to regex-based parsing
-            logger.debug(f"JSON parsing failed ({e}), falling back to regex parsing")
-            return self._fallback_regex_parse(llm_response, task_description, default_result)
-
-    def _extract_json_from_response(self, response: str) -> Optional[str]:
-        """Extract JSON string from LLM response using multiple strategies."""
-
-        # Strategy 1: JSON code block
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
-        if json_match:
-            return json_match.group(1)
-
-        # Strategy 2: JSON without code blocks but with function_found key
-        json_match = re.search(r'(\{[^{}]*"function_found"[^{}]*\})', response, re.DOTALL)
-        if json_match:
-            return json_match.group(1)
-
-        # Strategy 3: More flexible JSON extraction
-        json_match = re.search(r'(\{(?:[^{}]|{[^{}]*})*\})', response, re.DOTALL)
-        if json_match:
-            potential_json = json_match.group(1)
-            # Check if it contains expected keys
-            if any(key in potential_json for key in ['function_found', 'needs_new_function', 'matched_functions']):
-                return potential_json
-
-        return None
-
-    def _validate_and_complete_json_structure(self, parsed_json: Dict[str, Any], default_result: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate JSON structure and complete missing fields."""
-
-        result = default_result.copy()
-
-        # Required fields with validation
-        result['function_found'] = bool(parsed_json.get('function_found', False))
-        result['needs_new_function'] = bool(parsed_json.get('needs_new_function', False))
-        result['reasoning'] = str(parsed_json.get('reasoning', '')) if parsed_json.get('reasoning') else None
-
-        # Validate matched_functions structure
-        matched_functions = parsed_json.get('matched_functions', [])
-        if isinstance(matched_functions, list):
-            validated_functions = []
-            for func in matched_functions:
-                if isinstance(func, dict) and 'name' in func:
-                    # Ensure required fields
-                    validated_func = {
-                        'name': str(func['name']),
-                        'description': str(func.get('description', '')),
-                        'signature': str(func.get('signature', ''))
-                    }
-                    validated_functions.append(validated_func)
-            result['matched_functions'] = validated_functions
-
-        # Validate suggested_function_spec structure
-        suggested_spec = parsed_json.get('suggested_function_spec')
-        if isinstance(suggested_spec, dict):
-            # Validate function name is a valid Python identifier
-            func_name = suggested_spec.get('name', '')
-            if func_name and func_name.isidentifier():
-                result['suggested_function_spec'] = {
-                    'name': func_name,
-                    'description': str(suggested_spec.get('description', '')),
-                    'signature': str(suggested_spec.get('signature', '')),
-                    'examples': self._validate_examples_structure(suggested_spec.get('examples', []))
-                }
-
-        return result
-
-    def _validate_examples_structure(self, examples: Any) -> List[Dict[str, str]]:
-        """Validate and clean examples structure."""
-        if not isinstance(examples, list):
-            return []
-
-        validated_examples = []
-        for example in examples:
-            if isinstance(example, dict) and 'input' in example and 'output' in example:
-                validated_examples.append({
-                    'input': str(example['input']),
-                    'output': str(example['output'])
-                })
-
-        return validated_examples
-
-    def _fallback_regex_parse(self, llm_response: str, task_description: str, default_result: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Fallback regex-based parsing when JSON parsing fails.
-        """
-        result = default_result.copy()
-
-        # Try to determine if existing functions were found
-        if any(phrase in llm_response.lower() for phrase in [
-            'found function', 'existing function', 'can use', 'available function'
-        ]):
-            result['function_found'] = True
-
-        # Try to determine if new function is needed
-        if any(phrase in llm_response.lower() for phrase in [
-            'need to create', 'new function', 'missing function', 'no suitable function'
-        ]):
-            result['needs_new_function'] = True
-
-        # Extract matched functions from response
-        result['matched_functions'] = self._extract_matched_functions_from_response(llm_response)
-        if result['matched_functions']:
-            result['function_found'] = True
-
-        # Try to extract function specifications from the response
-        function_name = self._extract_function_name_from_response(llm_response)
-
-        # If we found indicators of a new function, try to extract more details
-        if result['needs_new_function'] and function_name:
-            result['suggested_function_spec'] = {
-                'name': function_name,
-                'description': self._extract_description_from_response(llm_response),
-                'signature': self._extract_signature_from_response(llm_response),
-                'examples': self._extract_examples_from_response(llm_response)
-            }
-
-        return result
-
-    def _extract_matched_functions_from_response(self, llm_response: str) -> List[Dict[str, str]]:
-        """
-        Extract matched functions from LLM response.
-
-        Returns:
-            List of dictionaries with 'name', 'description', and 'signature' keys
-        """
-        matched_functions = []
-
-        # Pattern: - **function_name**: description\n  Signature: signature
-        func_matches = re.findall(
-            r'-\s*\*\*(.*?)\*\*:\s*(.*?)\n\s*Signature:\s*(.*?)(?:\n|$)',
-            llm_response,
-            re.DOTALL
-        )
-
-        for name, desc, sig in func_matches:
-            matched_functions.append({
-                'name': name.strip(),
-                'description': desc.strip(),
-                'signature': sig.strip()
-            })
-
-        # Alternative pattern: Function: name - description
-        if not matched_functions:
-            alt_matches = re.findall(
-                r'Function:\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*-\s*(.*?)(?:\n|$)',
-                llm_response
-            )
-            for name, desc in alt_matches:
-                matched_functions.append({
-                    'name': name.strip(),
-                    'description': desc.strip(),
-                    'signature': ''
-                })
-
-        return matched_functions
-
-    def _extract_function_name_from_response(self, response: str) -> Optional[str]:
-        """Extract function name from LLM response."""
-        name_patterns = [
-            r'function name[:\s]+([a-zA-Z_][a-zA-Z0-9_]*)',
-            r'name[:\s]+([a-zA-Z_][a-zA-Z0-9_]*)',
-            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
-        ]
-
-        for pattern in name_patterns:
-            match = re.search(pattern, response, re.IGNORECASE)
-            if match:
-                return match.group(1)
-        return None
-
-    def _extract_description_from_response(self, response: str) -> str:
-        """Extract function description from LLM response."""
-        # Look for description patterns
-        patterns = [
-            r'purpose[:\s]+([^\n]+)',
-            r'description[:\s]+([^\n]+)',
-            r'what it does[:\s]+([^\n]+)'
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, response, re.IGNORECASE)
-            if match:
-                return match.group(1).strip()
-
-        return "Function description not specified"
-
-    def _extract_signature_from_response(self, response: str) -> str:
-        """Extract and validate function signature from LLM response."""
-        import ast
-
-        # Look for function signature patterns
-        patterns = [
-            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)\s*->\s*[^:]+)',
-            r'signature[:\s]+([^\n]+)',
-            r'parameters[:\s]+([^\n]+)',
-            r'\(([^)]*)\)\s*->\s*([^:\n]+)',  # (param: type) -> return_type
-            r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*->\s*[^:\n]+',  # func_name(...) -> type
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, response, re.IGNORECASE)
-            if match:
-                signature = match.group(1).strip()
-
-                # Validate signature using AST parsing
-                if self._validate_function_signature(signature):
-                    return signature
-
-        return "Signature not specified"
-
-    def _validate_function_signature(self, signature: str) -> bool:
-        """
-        Validate function signature using stricter AST parsing and type annotation checking.
-
-        Args:
-            signature: Function signature string
-
-        Returns:
-            True if signature is valid, False otherwise
-        """
-        import ast
-        import typing
-
-        try:
-            # Clean and prepare signature
-            signature = signature.strip()
-
-            # Try to parse as a complete function definition
-            if not signature.startswith('def '):
-                signature = f"def {signature}"
-
-            # Add a pass statement to make it a complete function
-            if not signature.endswith(':'):
-                signature += ':'
-            signature += '\n    pass'
-
-            # Parse the function using AST
-            tree = ast.parse(signature)
-
-            # Extract function definition
-            if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
-                return False
-
-            func_def = tree.body[0]
-
-            # Validate function name is a valid identifier
-            if not func_def.name.isidentifier() or func_def.name.startswith('_'):
-                return False
-
-            # Validate parameters have type annotations (stricter requirement)
-            for arg in func_def.args.args:
-                if not arg.annotation:
-                    logger.debug(f"Parameter '{arg.arg}' missing type annotation")
-                    # Allow functions without type annotations but log warning
-                    pass
-
-            # Validate return type annotation exists
-            if not func_def.returns:
-                logger.debug(f"Function '{func_def.name}' missing return type annotation")
-                # Allow functions without return type but log warning
-                pass
-
-            return True
-
-        except SyntaxError:
-            try:
-                # Try alternative parsing - maybe it's just the signature part
-                if '(' in signature and ')' in signature:
-                    # Extract function name and parameters
-                    func_match = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)', signature)
-                    if func_match:
-                        func_name, params = func_match.groups()
-                        # Basic validation - function name should be valid identifier
-                        if func_name.isidentifier():
-                            return True
-                return False
-            except:
-                return False
-
-    def _extract_examples_from_response(self, response: str) -> List[Dict[str, str]]:
-        """
-        Extract structured examples from LLM response using JSON-first approach.
-
-        Returns:
-            List of dictionaries with 'input' and 'output' keys
-        """
-        examples = []
-
-        # Strategy 1: Try to extract from JSON structure first
-        try:
-            json_str = self._extract_json_from_response(response)
-            if json_str:
-                parsed_json = json.loads(json_str)
-                suggested_spec = parsed_json.get('suggested_function_spec', {})
-                if isinstance(suggested_spec, dict):
-                    json_examples = suggested_spec.get('examples', [])
-                    if isinstance(json_examples, list):
-                        for example in json_examples:
-                            if isinstance(example, dict) and 'input' in example and 'output' in example:
-                                examples.append({
-                                    'input': str(example['input']),
-                                    'output': str(example['output'])
-                                })
-        except (json.JSONDecodeError, KeyError):
-            pass
-
-        # Strategy 2: Look for structured example patterns
-        if not examples:
-            # Pattern: {"input": "value", "output": "result"}
-            json_example_pattern = r'\{\s*["\']input["\']\s*:\s*["\']([^"\']+)["\']\s*,\s*["\']output["\']\s*:\s*["\']([^"\']+)["\']\s*\}'
-            matches = re.findall(json_example_pattern, response, re.IGNORECASE)
-
-            for input_val, output_val in matches:
-                examples.append({
-                    'input': input_val.strip(),
-                    'output': output_val.strip()
-                })
-
-        # Strategy 3: Look for structured list patterns
-        if not examples:
-            # Pattern: - input: "value", output: result
-            structured_pattern = r'-\s*input:\s*["\']?([^"\']+)["\']?,\s*output:\s*([^\n]+)'
-            matches = re.findall(structured_pattern, response, re.IGNORECASE)
-
-            for input_val, output_val in matches:
-                examples.append({
-                    'input': input_val.strip(),
-                    'output': output_val.strip().strip('"\'')
-                })
-
-        # Strategy 4: Fallback to legacy arrow patterns (less reliable)
-        if not examples:
-            lines = response.split('\n')
-            in_examples = False
-
-            for line in lines:
-                line = line.strip()
-                if any(word in line.lower() for word in ['example', 'test case', 'input', 'output']):
-                    in_examples = True
-
-                if in_examples:
-                    # Try to parse different arrow formats
-                    for separator in ['=>', '->', '→', 'output:', 'returns:']:
-                        if separator in line.lower():
-                            parts = line.split(separator, 1)
-                            if len(parts) == 2:
-                                input_part = parts[0].strip()
-                                output_part = parts[1].strip()
-
-                                # Clean up input part
-                                input_part = re.sub(r'^(input:?|example:?)', '', input_part, flags=re.IGNORECASE).strip()
-                                input_part = input_part.strip('"\'')
-
-                                # Clean up output part
-                                output_part = re.sub(r'^(output:?|result:?)', '', output_part, flags=re.IGNORECASE).strip()
-                                output_part = output_part.strip('"\'')
-
-                                if input_part and output_part:
-                                    examples.append({
-                                        'input': input_part,
-                                        'output': output_part
-                                    })
-                                break
-
-                    # Stop if we hit an empty line or new section
-                    if line == '' or line.startswith('#') or line.startswith('**'):
-                        if examples:  # Only break if we've found some examples
-                            break
-
-        return examples[:3]  # Return at most 3 examples

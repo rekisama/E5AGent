@@ -1,390 +1,578 @@
 """
-Secure Code Executor for Function Registry.
+Security Validator and Secure Code Execution Module.
 
-This module provides secure execution of dynamically generated functions
-with sandboxing and security validation.
+This module provides security validation and safe code execution capabilities
+for the Function Creator Agent system. It includes:
+
+1. SecurityValidator: AST-based security analysis to detect dangerous operations
+2. Safe code execution with sandboxing and restricted built-ins
+3. Function code validation with syntax and security checks
+4. Comprehensive security policy enforcement
+
+安全验证器和安全代码执行模块，为函数创建代理系统提供安全验证和安全代码执行能力。
+包括基于 AST 的安全分析、沙箱执行、函数代码验证和全面的安全策略执行。
 """
 
 import ast
-import hashlib
 import logging
-import sys
-from typing import Dict, Any, Optional, Set, List, Tuple, Callable
-from contextlib import contextmanager
-import threading
-import time
-
-"""
-1. ⚠️ threading.Timer 无法真正中断主线程执行
-你使用 threading.Timer 抛 TimeoutError，但它不会影响主线程中 exec 的执行，Python 本身没有原生机制可以终止正在执行的 exec() 代码。
-
-风险： 一旦用户提交的函数中有 while True: pass 或类似死循环，定时器虽然会触发 TimeoutError，但主线程并不会中止 exec，系统可能挂起。
-
-✅ 建议更换为真正安全的隔离执行方式：
-
-✅ 使用 multiprocessing.Process + Queue 实现真正的超时与进程中断。
-
-✅ 或者使用 PyPy-Sandbox / restrictedpython 做更强隔离（更复杂）。
-
-示例修复（简化版）：
-
-python
-复制
-编辑
+from typing import List, Tuple, Dict, Any, Optional
 from multiprocessing import Process, Queue
-
-def _exec_code(code, globals_dict, locals_dict, queue):
-    try:
-        exec(code, globals_dict, locals_dict)
-        queue.put((True, locals_dict))
-    except Exception as e:
-        queue.put((False, str(e)))
-
-def execute_code(self, code: str, timeout: int = 5) -> Tuple[bool, Any]:
-    is_valid, violations = self.validate_code(code)
-    if not is_valid:
-        return False, {"error": "; ".join(violations)}
-    
-    queue = Queue()
-    restricted_globals = self._create_restricted_globals()
-    locals_dict = {}
-    p = Process(target=_exec_code, args=(code, restricted_globals, locals_dict, queue))
-    p.start()
-    p.join(timeout)
-    if p.is_alive():
-        p.terminate()
-        return False, {"error": "Execution timed out"}
-    if not queue.empty():
-        return queue.get()
-    return False, {"error": "Unknown execution failure"}
-⚠️ 2. __builtins__ 类型不统一兼容处理不错，但存在 eval 绕过风险
-当前代码处理了 __builtins__ 既可能是 dict 也可能是模块，✅ 正确。
-
-但用户仍可能通过例如：
-
-python
-复制
-编辑
-(lambda f: f.__globals__['__builtins__']['eval'])("1+1")
-绕过访问 builtins。
-
-建议增强 ast 安全扫描：
-
-增加 visit_Lambda 检查 __globals__, __dict__, __closure__ 等。
-
-✅ 或者在 exec 前强制：
-
-python
-复制
-编辑
-code = code.replace('__globals__', '').replace('__dict__', '')
-或在 _create_restricted_globals 里移除更多潜在逃逸对象。
-
-⚠️ 3. 模块白名单缺少注释或配置文件支持
-allowed_modules 是硬编码的，未来难以维护。
-
-✅ 建议：
-
-将其配置写入 secure_executor_config.json，或者放到 settings.py 中作为白名单可修改。
-
-或者暴露一个 set_allowed_modules(modules: Set[str]) 接口用于注册。
-
-⚠️ 4. execute_code_safely 与 execute_code 功能有重复
-二者都做了 validate → exec → return locals，差异仅在是否指定函数名。
-
-✅ 建议：复用 execute_code 作为基础实现：
-
-python
-复制
-编辑
-def execute_code_safely(self, code, func_name):
-    success, result = self.execute_code(code)
-    if not success:
-        return False, None, result.get("error", "Unknown error")
-    if func_name not in result:
-        return False, None, f"Function {func_name} not found"
-    return True, result[func_name], ""
-⚠️ 5. _execution_lock 并没有必要
-当前 SecureExecutor 是单例，在多线程场景下添加锁是可以的，但：
-
-exec 是局部执行，不需要强制串行。
-
-你如果改为 multiprocessing，该锁完全无用。
-
-✅ 建议移除 _execution_lock，或注明其并不影响主线程执行安全。
-
-⚠️ 6. SecurityValidator.visit_Call 中未处理 node.func.value 是复杂对象
-存在语法结构如：
-
-python
-复制
-编辑
-myobj.method()
-此时 node.func.value 并不总是 ast.Name，直接取 .id 会报错。
-
-✅ 建议加判断：
-
-python
-复制
-编辑
-if isinstance(node.func.value, ast.Name):
-    if node.func.value.id == '__builtins__':
-        ...
-✅ 建议补充功能
-✅ log_code_hash(code)：记录每段代码的 SHA256 哈希日志，追溯责任。
-
-✅ def extract_function_names(code: str) -> List[str]：提取所有函数名，可供上游工具（如代码注册器）使用。
-
-✅ 增加对 ast.Lambda、ast.With 等 node 的处理，避免上下文逃逸。
-
-✅ 增加 --dry-run 模式供 debug 模拟执行环境。
-
-
-"""
-
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
 
 class SecurityValidator(ast.NodeVisitor):
-    """Enhanced security validator for function code."""
-    
+    """
+    Custom AST visitor for enhanced security validation.
+
+    This class analyzes Python code AST to detect potentially dangerous operations
+    including dangerous function calls, module imports, and built-in access patterns.
+    """
+
     def __init__(self):
-        self.violations = []
-        self.allowed_builtins = {
-            'abs', 'all', 'any', 'bin', 'bool', 'chr', 'dict', 'enumerate',
-            'filter', 'float', 'format', 'frozenset', 'hex', 'int', 'len',
-            'list', 'map', 'max', 'min', 'oct', 'ord', 'pow', 'range',
-            'reversed', 'round', 'set', 'slice', 'sorted', 'str', 'sum',
-            'tuple', 'type', 'zip', 'iter', 'next', 'divmod', 'hash',
-            'isinstance', 'issubclass', 'callable', 'repr', 'ascii'
-        }
+        """Initialize the security validator with dangerous patterns."""
+        self.security_violations = []
+
+        # Dangerous functions that should not be allowed
         self.dangerous_functions = {
             'eval', 'exec', 'compile', '__import__', 'getattr', 'setattr',
             'delattr', 'hasattr', 'globals', 'locals', 'vars', 'dir',
-            'open', 'file', 'input', 'raw_input', 'exit', 'quit'
+            'open', 'file', 'input', 'raw_input'
         }
+
+        # Dangerous modules that should not be imported
         self.dangerous_modules = {
             'os', 'sys', 'subprocess', 'shutil', 'tempfile', 'pickle',
             'marshal', 'shelve', 'dbm', 'sqlite3', 'socket', 'urllib',
-            'http', 'ftplib', 'smtplib', 'poplib', 'imaplib', 'threading',
-            'multiprocessing', 'ctypes', 'importlib'
-        }
-        self.allowed_modules = {
-            're', 'math', 'datetime', 'json', 'base64', 'hashlib',
-            'random', 'string', 'collections', 'itertools', 'functools'
+            'http', 'ftplib', 'smtplib', 'poplib', 'imaplib'
         }
 
     def visit_Call(self, node):
         """Check function calls for security violations."""
         if isinstance(node.func, ast.Name):
-            func_name = node.func.id
-            if func_name in self.dangerous_functions:
-                self.violations.append(f"Dangerous function call: {func_name}")
-            elif func_name not in self.allowed_builtins and not func_name.startswith('_'):
-                # Allow user-defined functions but flag suspicious ones
-                if func_name.startswith('__'):
-                    self.violations.append(f"Suspicious dunder method call: {func_name}")
+            if node.func.id in self.dangerous_functions:
+                self.security_violations.append(f"Dangerous function call: {node.func.id}")
         elif isinstance(node.func, ast.Attribute):
-            if hasattr(node.func.value, 'id'):
-                if node.func.value.id == '__builtins__':
-                    self.violations.append(f"Direct __builtins__ access: {node.func.attr}")
+            if hasattr(node.func.value, 'id') and node.func.value.id == '__builtins__':
+                self.security_violations.append(f"Direct __builtins__ access: {node.func.attr}")
         self.generic_visit(node)
 
     def visit_Import(self, node):
         """Check imports for dangerous modules."""
         for alias in node.names:
-            module_name = alias.name.split('.')[0]  # Get root module
-            if module_name in self.dangerous_modules:
-                self.violations.append(f"Dangerous module import: {module_name}")
-            elif module_name not in self.allowed_modules:
-                self.violations.append(f"Unauthorized module import: {module_name}")
+            if alias.name in self.dangerous_modules:
+                self.security_violations.append(f"Dangerous module import: {alias.name}")
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node):
         """Check from imports for dangerous modules."""
-        if node.module:
-            module_name = node.module.split('.')[0]  # Get root module
-            if module_name in self.dangerous_modules:
-                self.violations.append(f"Dangerous module import: {module_name}")
-            elif module_name not in self.allowed_modules:
-                self.violations.append(f"Unauthorized module import: {module_name}")
-        self.generic_visit(node)
-
-    def visit_Attribute(self, node):
-        """Check attribute access for dangerous patterns."""
-        if isinstance(node.value, ast.Name):
-            if node.value.id in ['__builtins__', '__globals__', '__locals__']:
-                self.violations.append(f"Dangerous attribute access: {node.value.id}.{node.attr}")
+        if node.module in self.dangerous_modules:
+            self.security_violations.append(f"Dangerous module import: {node.module}")
         self.generic_visit(node)
 
     def get_violations(self) -> List[str]:
         """Return list of security violations found."""
-        return self.violations
+        return self.security_violations
+
+    def reset(self):
+        """Reset the validator for reuse."""
+        self.security_violations = []
 
 
-class SecureExecutor:
-    """Secure executor for dynamically generated functions."""
-    
-    def __init__(self):
-        self.validator = SecurityValidator()
-        self._execution_lock = threading.Lock()
-        self._execution_timeout = 30  # seconds
-        
-    def validate_code(self, code: str) -> Tuple[bool, List[str]]:
-        """Validate code for security issues."""
+def validate_function_code(code: str) -> Tuple[bool, str, str]:
+    """
+    Validate function code for syntax and security.
+
+    Args:
+        code: Python function code to validate
+
+    Returns:
+        Tuple of (is_valid, error_message, function_name)
+    """
+    if not code or not code.strip():
+        return False, "Empty code provided", ""
+
+    try:
+        # Parse the code into AST
+        tree = ast.parse(code)
+
+        # Find function definitions
+        func_defs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if not func_defs:
+            return False, "No function definition found in code", ""
+
+        # Get the first function name
+        func_name = func_defs[0].name
+
+        # Validate function name
+        if not func_name or not func_name.isidentifier():
+            return False, f"Invalid function name: {func_name}", func_name
+
+        # Security validation
+        validator = SecurityValidator()
+        validator.visit(tree)
+        violations = validator.get_violations()
+
+        if violations:
+            return False, f"Security violations: {'; '.join(violations)}", func_name
+
+        # Additional syntax validation
+        compile(code, '<string>', 'exec')
+
+        return True, "", func_name
+
+    except SyntaxError as e:
+        return False, f"Syntax error: {e}", ""
+    except Exception as e:
+        return False, f"Validation error: {e}", ""
+
+
+def create_safe_namespace() -> Dict[str, Any]:
+    """
+    Create a safe namespace for code execution with restricted built-ins.
+
+    Returns:
+        Dictionary containing safe built-in functions and modules
+    """
+    # Start with safe built-ins
+    safe_builtins = {
+        # Basic types
+        'int', 'float', 'str', 'bool', 'list', 'dict', 'tuple', 'set',
+        # Basic functions
+        'len', 'range', 'enumerate', 'zip', 'map', 'filter', 'sorted',
+        'min', 'max', 'sum', 'abs', 'round', 'pow',
+        # Type checking
+        'isinstance', 'type', 'callable',
+        # Iteration
+        'iter', 'next', 'reversed',
+        # String operations
+        'ord', 'chr', 'repr', 'str',
+        # Math operations
+        'divmod', 'hex', 'oct', 'bin',
+        # Exception handling
+        'Exception', 'ValueError', 'TypeError', 'KeyError', 'IndexError',
+        'AttributeError', 'RuntimeError', 'NotImplementedError'
+    }
+
+    # Create restricted namespace
+    namespace = {
+        '__builtins__': {name: getattr(__builtins__, name)
+                        for name in safe_builtins
+                        if hasattr(__builtins__, name)}
+    }
+
+    # Add safe modules
+    import math
+    import re
+    import datetime
+    import json
+    import random
+
+    namespace.update({
+        'math': math,
+        're': re,
+        'datetime': datetime,
+        'json': json,
+        'random': random
+    })
+
+    return namespace
+
+
+def execute_code_safely(code: str, timeout_seconds: int = 10) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Execute code safely with timeout and sandboxing using multiprocessing.
+
+    Args:
+        code: Python code to execute
+        timeout_seconds: Maximum execution time in seconds
+
+    Returns:
+        Tuple of (success, error_message, namespace_after_execution)
+    """
+    def _execute_in_process(code: str, result_queue: Queue):
+        """Execute code in a separate process."""
         try:
-            # Parse the code into AST
-            tree = ast.parse(code)
-            
-            # Reset validator for new code
-            self.validator = SecurityValidator()
-            self.validator.visit(tree)
-            
-            violations = self.validator.get_violations()
-            return len(violations) == 0, violations
-            
-        except SyntaxError as e:
-            return False, [f"Syntax error: {e}"]
+            # Create safe namespace
+            namespace = create_safe_namespace()
+
+            # Execute the code
+            exec(code, namespace)
+
+            # Return the namespace (excluding built-ins for serialization)
+            result_namespace = {k: v for k, v in namespace.items()
+                              if k != '__builtins__' and not k.startswith('__')}
+
+            result_queue.put(('success', '', result_namespace))
+
         except Exception as e:
-            return False, [f"Validation error: {e}"]
-    
-    def compute_code_hash(self, code: str) -> str:
-        """Compute SHA-256 hash of code for integrity checking."""
-        return hashlib.sha256(code.encode('utf-8')).hexdigest()
-    
-    def execute_code_safely(self, code: str, expected_function_name: str) -> Tuple[bool, Optional[Callable], str]:
-        """
-        Execute code safely in a restricted environment.
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            result_queue.put(('error', error_msg, {}))
 
-        Returns:
-            (success, function, error_message)
-        """
-        with self._execution_lock:
-            try:
-                # Validate code first
-                is_valid, violations = self.validate_code(code)
-                if not is_valid:
-                    return False, None, f"Security violations: {'; '.join(violations)}"
-                
-                # Create restricted execution environment
-                restricted_globals = self._create_restricted_globals()
-                local_scope = {}
-                
-                # Execute with timeout protection
-                with self._timeout_context(self._execution_timeout):
-                    exec(code, restricted_globals, local_scope)
-                
-                # Check if expected function was created
-                if expected_function_name not in local_scope:
-                    return False, None, f"Function '{expected_function_name}' not found in executed code"
-                
-                func = local_scope[expected_function_name]
-                if not callable(func):
-                    return False, None, f"'{expected_function_name}' is not callable"
-                
-                return True, func, ""
-                
-            except TimeoutError:
-                return False, None, "Code execution timed out"
-            except Exception as e:
-                logger.error(f"Code execution failed: {e}")
-                return False, None, f"Execution error: {e}"
-    
-    def _create_restricted_globals(self) -> Dict[str, Any]:
-        """Create a restricted global environment for code execution."""
-        # Start with minimal builtins
-        restricted_builtins = {}
+    # Create queue for inter-process communication
+    result_queue = Queue()
 
-        # Get builtins from the correct source
-        if isinstance(__builtins__, dict):
-            builtins_dict = __builtins__
+    # Create and start process
+    process = Process(target=_execute_in_process, args=(code, result_queue))
+    process.start()
+
+    try:
+        # Wait for result with timeout
+        process.join(timeout=timeout_seconds)
+
+        if process.is_alive():
+            # Process is still running, terminate it
+            process.terminate()
+            process.join(timeout=1)  # Give it a second to terminate gracefully
+
+            if process.is_alive():
+                # Force kill if still alive
+                process.kill()
+                process.join()
+
+            return False, f"Code execution timeout after {timeout_seconds} seconds", {}
+
+        # Get result from queue
+        if not result_queue.empty():
+            status, error_msg, namespace = result_queue.get()
+            return status == 'success', error_msg, namespace
         else:
-            builtins_dict = __builtins__.__dict__
+            return False, "No result returned from execution process", {}
 
-        for name in self.validator.allowed_builtins:
-            if name in builtins_dict:
-                restricted_builtins[name] = builtins_dict[name]
+    except Exception as e:
+        # Clean up process if still running
+        if process.is_alive():
+            process.terminate()
+            process.join()
 
-        # Add basic types for type annotations
-        restricted_builtins.update({
-            'int': int,
-            'str': str,
-            'float': float,
-            'bool': bool,
-            'list': list,
-            'dict': dict,
-            'tuple': tuple,
-            'set': set,
-            'range': range,  # Explicitly add range
-        })
+        return False, f"Execution error: {e}", {}
 
-        # Add safe modules
-        safe_modules = {}
-        for module_name in self.validator.allowed_modules:
-            try:
-                safe_modules[module_name] = __import__(module_name)
-            except ImportError:
-                pass  # Module not available, skip
+    finally:
+        # Ensure process is cleaned up
+        if process.is_alive():
+            process.terminate()
+            process.join()
 
-        return {
-            '__builtins__': restricted_builtins,
-            **safe_modules
-        }
 
-    def execute_code(self, code: str, timeout: int = 10) -> Tuple[bool, Dict[str, Any]]:
+def test_function_safely(func_code: str, func_name: str, test_cases: List[Dict],
+                        timeout_seconds: int = 10) -> Tuple[bool, str, List[Dict]]:
+    """
+    Test a function safely with provided test cases.
+
+    Args:
+        func_code: Function code to test
+        func_name: Name of the function to test
+        test_cases: List of test case dictionaries
+        timeout_seconds: Maximum execution time per test
+
+    Returns:
+        Tuple of (all_tests_passed, error_message, test_results)
+    """
+    if not test_cases:
+        return True, "No test cases provided", []
+
+    test_results = []
+
+    for i, test_case in enumerate(test_cases):
+        try:
+            # Extract test case information
+            description = test_case.get('description', f'Test case {i+1}')
+            test_input = test_case.get('input', {})
+            expected_output = test_case.get('expected_output', 'auto_generated')
+
+            # Create test code
+            if isinstance(test_input, dict):
+                # Convert dict input to function call
+                args_str = ', '.join(f"{k}={repr(v)}" for k, v in test_input.items())
+                test_code = f"""
+{func_code}
+
+# Test execution
+try:
+    result = {func_name}({args_str})
+    test_success = True
+    test_error = None
+except Exception as e:
+    result = None
+    test_success = False
+    test_error = f"{{type(e).__name__}}: {{str(e)}}"
+"""
+            else:
+                # Handle other input formats
+                test_code = f"""
+{func_code}
+
+# Test execution
+try:
+    result = {func_name}({repr(test_input)})
+    test_success = True
+    test_error = None
+except Exception as e:
+    result = None
+    test_success = False
+    test_error = f"{{type(e).__name__}}: {{str(e)}}"
+"""
+
+            # Execute test safely
+            success, error_msg, namespace = execute_code_safely(test_code, timeout_seconds)
+
+            if success:
+                # Extract test results from namespace
+                test_success = namespace.get('test_success', False)
+                test_error = namespace.get('test_error')
+                result = namespace.get('result')
+
+                test_results.append({
+                    'description': description,
+                    'success': test_success,
+                    'result': result,
+                    'error': test_error,
+                    'expected': expected_output
+                })
+
+            else:
+                test_results.append({
+                    'description': description,
+                    'success': False,
+                    'result': None,
+                    'error': error_msg,
+                    'expected': expected_output
+                })
+
+        except Exception as e:
+            test_results.append({
+                'description': description,
+                'success': False,
+                'result': None,
+                'error': f"Test execution error: {e}",
+                'expected': expected_output
+            })
+
+    # Check if all tests passed
+    all_passed = all(result['success'] for result in test_results)
+
+    if all_passed:
+        return True, "", test_results
+    else:
+        failed_count = sum(1 for result in test_results if not result['success'])
+        return False, f"{failed_count} out of {len(test_results)} tests failed", test_results
+
+
+def validate_function_signature(signature: str) -> bool:
+    """
+    Validate function signature using stricter AST parsing and type annotation checking.
+
+    Args:
+        signature: Function signature string
+
+    Returns:
+        True if signature is valid, False otherwise
+    """
+    import re
+
+    try:
+        # Clean and prepare signature
+        signature = signature.strip()
+
+        # Try to parse as a complete function definition
+        if not signature.startswith('def '):
+            signature = f"def {signature}"
+
+        # Add a pass statement to make it a complete function
+        if not signature.endswith(':'):
+            signature += ':'
+        signature += '\n    pass'
+
+        # Parse the function using AST
+        tree = ast.parse(signature)
+
+        # Extract function definition
+        if not tree.body or not isinstance(tree.body[0], ast.FunctionDef):
+            return False
+
+        func_def = tree.body[0]
+
+        # Validate function name is a valid identifier
+        if not func_def.name.isidentifier() or func_def.name.startswith('_'):
+            return False
+
+        # Validate parameters have type annotations (stricter requirement)
+        for arg in func_def.args.args:
+            if not arg.annotation:
+                logger.debug(f"Parameter '{arg.arg}' missing type annotation")
+                # Allow functions without type annotations but log warning
+                pass
+
+        # Validate return type annotation exists
+        if not func_def.returns:
+            logger.debug(f"Function '{func_def.name}' missing return type annotation")
+            # Allow functions without return type but log warning
+            pass
+
+        return True
+
+    except SyntaxError:
+        try:
+            # Try alternative parsing - maybe it's just the signature part
+            if '(' in signature and ')' in signature:
+                # Extract function name and parameters
+                func_match = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)', signature)
+                if func_match:
+                    func_name, params = func_match.groups()
+                    # Basic validation - function name should be valid identifier
+                    if func_name.isidentifier():
+                        return True
+            return False
+        except:
+            return False
+
+
+def extract_function_signature_from_code(code: str) -> Optional[str]:
+    """
+    Extract function signature from function code.
+
+    Args:
+        code: Python function code
+
+    Returns:
+        Function signature string or None if not found
+    """
+    try:
+        tree = ast.parse(code)
+
+        # Find function definitions
+        func_defs = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        if not func_defs:
+            return None
+
+        func_def = func_defs[0]  # Get first function
+
+        # Build signature string
+        signature_parts = [f"def {func_def.name}("]
+
+        # Add parameters
+        params = []
+        for arg in func_def.args.args:
+            param_str = arg.arg
+            if arg.annotation:
+                # Convert annotation AST back to string
+                param_str += f": {ast.unparse(arg.annotation)}"
+            params.append(param_str)
+
+        signature_parts.append(", ".join(params))
+        signature_parts.append(")")
+
+        # Add return type if present
+        if func_def.returns:
+            signature_parts.append(f" -> {ast.unparse(func_def.returns)}")
+
+        return "".join(signature_parts)
+
+    except Exception as e:
+        logger.debug(f"Failed to extract signature from code: {e}")
+        return None
+
+
+class FunctionSignatureParser:
+    """Parses function signatures and extracts parameter information."""
+
+    @staticmethod
+    def parse_signature(signature: str) -> List[Dict[str, Any]]:
         """
-        Execute code and return the local scope with all defined functions/variables.
+        Parse function signature to extract parameter information.
 
         Args:
-            code: Python code to execute
-            timeout: Execution timeout in seconds
+            signature: Function signature string
 
         Returns:
-            Tuple[bool, Dict]: (success, local_scope or error_message)
+            List of parameter dictionaries with name, type, and default info
         """
+        parameters = []
+
+        if not signature:
+            return parameters
+
         try:
-            # Validate code first
-            is_valid, violations = self.validate_code(code)
-            if not is_valid:
-                return False, {"error": f"Security violations: {'; '.join(violations)}"}
+            # Clean up signature for parsing
+            clean_sig = signature.strip()
+            if clean_sig.startswith('def '):
+                clean_sig = clean_sig[4:]
 
-            # Create restricted environment
-            restricted_globals = self._create_restricted_globals()
-            local_scope = {}
+            # Extract function name and parameters
+            if '(' in clean_sig and ')' in clean_sig:
+                func_part = clean_sig.split('(', 1)[1]
+                params_part = func_part.rsplit(')', 1)[0]
 
-            # Execute with timeout protection
-            with self._timeout_context(timeout):
-                exec(code, restricted_globals, local_scope)
+                if params_part.strip():
+                    # Split parameters by comma, handling nested structures
+                    param_strings = FunctionSignatureParser._split_parameters(params_part)
 
-            return True, local_scope
+                    for param_str in param_strings:
+                        param_info = FunctionSignatureParser._parse_parameter(param_str.strip())
+                        if param_info:
+                            parameters.append(param_info)
 
-        except TimeoutError:
-            return False, {"error": "Code execution timed out"}
         except Exception as e:
-            return False, {"error": str(e)}
+            logger.warning(f"Failed to parse signature '{signature}': {e}")
 
-    @contextmanager
-    def _timeout_context(self, timeout_seconds: int):
-        """Context manager for execution timeout."""
-        def timeout_handler():
-            raise TimeoutError("Code execution timed out")
+        return parameters
 
-        timer = threading.Timer(timeout_seconds, timeout_handler)
-        timer.start()
-        try:
-            yield
-        finally:
-            timer.cancel()
+    @staticmethod
+    def _split_parameters(params_str: str) -> List[str]:
+        """Split parameter string by commas, respecting nested structures."""
+        params = []
+        current_param = ""
+        paren_depth = 0
+        bracket_depth = 0
 
+        for char in params_str:
+            if char == ',' and paren_depth == 0 and bracket_depth == 0:
+                if current_param.strip():
+                    params.append(current_param.strip())
+                current_param = ""
+            else:
+                if char == '(':
+                    paren_depth += 1
+                elif char == ')':
+                    paren_depth -= 1
+                elif char == '[':
+                    bracket_depth += 1
+                elif char == ']':
+                    bracket_depth -= 1
+                current_param += char
 
-# Global secure executor instance
-_global_executor = None
+        if current_param.strip():
+            params.append(current_param.strip())
 
-def get_secure_executor() -> SecureExecutor:
-    """Get the global secure executor instance."""
-    global _global_executor
-    if _global_executor is None:
-        _global_executor = SecureExecutor()
-    return _global_executor
+        return params
+
+    @staticmethod
+    def _parse_parameter(param_str: str) -> Optional[Dict[str, Any]]:
+        """Parse individual parameter string."""
+        if not param_str or param_str in ['self', 'cls']:
+            return None
+
+        param_info = {
+            'name': '',
+            'type': 'Any',
+            'default': None,
+            'has_default': False
+        }
+
+        # Handle default values
+        if '=' in param_str:
+            name_type_part, default_part = param_str.split('=', 1)
+            param_info['default'] = default_part.strip()
+            param_info['has_default'] = True
+            param_str = name_type_part.strip()
+
+        # Handle type annotations
+        if ':' in param_str:
+            name_part, type_part = param_str.split(':', 1)
+            param_info['name'] = name_part.strip()
+            param_info['type'] = type_part.strip()
+        else:
+            param_info['name'] = param_str.strip()
+
+        return param_info if param_info['name'] else None

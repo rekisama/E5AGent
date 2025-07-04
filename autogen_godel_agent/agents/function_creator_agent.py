@@ -24,212 +24,17 @@ logger = logging.getLogger(__name__)
 # Add parent directory to path for imports (use insert for priority)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.function_tools import get_function_tools
-from .test_case_generator import TestCaseGenerator, TestResult
+from ..tools.function_tools import get_function_tools
+from ..tools.test_runner import TestResult
 from ..config import Config
 
 
 
 
-class SecurityValidator(ast.NodeVisitor):
-    """Custom AST visitor for enhanced security validation."""
-
-    def __init__(self):
-        self.security_violations = []
-        self.dangerous_functions = {
-            'eval', 'exec', 'compile', '__import__', 'getattr', 'setattr',
-            'delattr', 'hasattr', 'globals', 'locals', 'vars', 'dir',
-            'open', 'file', 'input', 'raw_input'
-        }
-        self.dangerous_modules = {
-            'os', 'sys', 'subprocess', 'shutil', 'tempfile', 'pickle',
-            'marshal', 'shelve', 'dbm', 'sqlite3', 'socket', 'urllib',
-            'http', 'ftplib', 'smtplib', 'poplib', 'imaplib'
-        }
-
-    def visit_Call(self, node):
-        """Check function calls for security violations."""
-        if isinstance(node.func, ast.Name):
-            if node.func.id in self.dangerous_functions:
-                self.security_violations.append(f"Dangerous function call: {node.func.id}")
-        elif isinstance(node.func, ast.Attribute):
-            if hasattr(node.func.value, 'id') and node.func.value.id == '__builtins__':
-                self.security_violations.append(f"Direct __builtins__ access: {node.func.attr}")
-        self.generic_visit(node)
-
-    def visit_Import(self, node):
-        """Check imports for dangerous modules."""
-        for alias in node.names:
-            if alias.name in self.dangerous_modules:
-                self.security_violations.append(f"Dangerous module import: {alias.name}")
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node):
-        """Check from imports for dangerous modules."""
-        if node.module in self.dangerous_modules:
-            self.security_violations.append(f"Dangerous module import: {node.module}")
-        self.generic_visit(node)
-
-    def get_violations(self) -> List[str]:
-        """Return list of security violations found."""
-        return self.security_violations
+# SecurityValidator is now imported from tools.secure_executor
 
 
-class PromptBuilder:
-    """Builder class for creating structured prompts for function generation."""
-
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        """Reset the builder to initial state."""
-        self._function_name = ""
-        self._description = ""
-        self._parameters = []
-        self._return_type = "Any"
-        self._examples = []
-        self._additional_requirements = []
-        return self
-
-    def set_function_name(self, name: str):
-        """Set the function name."""
-        self._function_name = name
-        return self
-
-    def set_description(self, description: str):
-        """Set the function description."""
-        self._description = description
-        return self
-
-    def set_parameters(self, parameters: List[Dict[str, Any]]):
-        """Set the function parameters."""
-        self._parameters = parameters
-        return self
-
-    def set_return_type(self, return_type: str):
-        """Set the return type."""
-        self._return_type = return_type
-        return self
-
-    def set_examples(self, examples: List[Dict[str, Any]]):
-        """Set usage examples."""
-        self._examples = examples
-        return self
-
-    def add_requirement(self, requirement: str):
-        """Add an additional requirement."""
-        self._additional_requirements.append(requirement)
-        return self
-
-    def build(self) -> str:
-        """Build the complete prompt."""
-        signature_params = self._build_signature_params(self._parameters)
-        full_signature = (
-            f"def {self._function_name}({signature_params}) -> {self._return_type}"
-        )
-
-        prompt = f"""Please create a Python function with the following specifications:
-
-Function Name: {self._function_name}
-Description: {self._description}
-Signature: {full_signature}
-Return Type: {self._return_type}
-
-Parameters:
-{self._format_parameters_description(self._parameters)}
-
-Examples:
-{self._format_examples(self._examples)}
-
-Requirements:
-1. Write a complete, working Python function
-2. Include proper type hints for parameters and return value
-3. Include a comprehensive docstring with description, parameters, and return value
-4. Handle edge cases and potential errors appropriately
-5. Use only safe, standard Python libraries (no file I/O, no system calls)
-6. Make the function robust and well-tested"""
-
-        if self._additional_requirements:
-            additional_reqs = "\n".join(
-                f"{i+7}. {req}" for i, req in enumerate(self._additional_requirements)
-            )
-            prompt += "\n" + additional_reqs
-
-        prompt += """
-
-Please provide ONLY the Python function code, wrapped in ```python``` code blocks.
-
-Example format:
-```python
-def function_name(param: type) -> return_type:
-    \"\"\"
-    Function description.
-
-    Args:
-        param: Parameter description
-
-    Returns:
-        Return value description
-    \"\"\"
-    # Implementation here
-    return result
-```"""
-
-        return prompt
-
-    def _build_signature_params(self, parameters: List[Dict[str, Any]]) -> str:
-        """Build function signature parameters from parameter specifications."""
-        if not parameters:
-            return ""
-
-        param_strings = []
-        for param in parameters:
-            name = param.get('name', '')
-            param_type = param.get('type', 'Any')
-            default = param.get('default')
-
-            if not name:
-                continue
-
-            if default is not None:
-                if isinstance(default, str):
-                    param_str = f"{name}: {param_type} = '{default}'"
-                else:
-                    param_str = f"{name}: {param_type} = {default}"
-            else:
-                param_str = f"{name}: {param_type}"
-
-            param_strings.append(param_str)
-
-        return ", ".join(param_strings)
-
-    def _format_parameters_description(self, parameters: List[Dict[str, Any]]) -> str:
-        """Format parameters for prompt description."""
-        if not parameters:
-            return "No parameters specified."
-
-        descriptions = []
-        for param in parameters:
-            name = param.get('name', '')
-            param_type = param.get('type', 'Any')
-            desc = param.get('description', 'No description')
-
-            descriptions.append(f"- {name} ({param_type}): {desc}")
-
-        return "\n".join(descriptions)
-
-    def _format_examples(self, examples: List[Dict[str, Any]]) -> str:
-        """Format examples for prompt."""
-        if not examples:
-            return "No examples provided."
-
-        formatted_examples = []
-        for i, example in enumerate(examples, 1):
-            input_val = example.get('input', '')
-            output_val = example.get('output', '')
-            formatted_examples.append(f"{i}. Input: {input_val} → Output: {output_val}")
-
-        return "\n".join(formatted_examples)
+# PromptBuilder functionality is now integrated into the main agent
 
 
 class FunctionCreatorAgent:
@@ -259,9 +64,6 @@ class FunctionCreatorAgent:
         self.llm_config = llm_config
         self.function_tools = function_tools or get_function_tools()
         self.max_attempts = 3
-        self.security_validator = SecurityValidator()
-        self.prompt_builder = PromptBuilder()
-        self.test_case_generator = TestCaseGenerator()
 
         # Validate function_tools interface
         self._validate_function_tools_interface()
@@ -346,10 +148,22 @@ Always validate and test functions before attempting to register them."""
         """Test a function with provided test cases."""
         try:
             # Enhanced input handling for multiple formats
-            normalized_test_cases = self.test_case_generator.normalize_test_input(test_cases)
+            # Use function_tools for test case normalization
+            if isinstance(test_cases, str):
+                try:
+                    import json
+                    normalized_test_cases = json.loads(test_cases) if test_cases != "[]" else []
+                except json.JSONDecodeError:
+                    normalized_test_cases = [{'description': test_cases, 'input': {}, 'expected_output': 'auto_generated'}]
+            elif isinstance(test_cases, dict):
+                normalized_test_cases = [test_cases]
+            elif isinstance(test_cases, list):
+                normalized_test_cases = test_cases
+            else:
+                normalized_test_cases = []
 
             # Use TestResult structure for better error handling
-            result_tuple = self.function_tools.test_function(
+            result_tuple = self.function_tools.test_function_with_cases(
                 code, func_name, normalized_test_cases
             )
             test_result = TestResult.from_tuple(result_tuple)
@@ -475,12 +289,12 @@ Always validate and test functions before attempting to register them."""
                     if is_valid:
                         logger.info(f"Code validation passed for {extracted_name}")
 
-                        # Generate test cases using enhanced method
-                        test_cases = self.test_case_generator.generate_enhanced_test_cases(specification, code)
+                        # Generate test cases using function_tools
+                        test_cases = self.function_tools.generate_test_cases(extracted_name, code, description)
                         logger.debug(f"Generated {len(test_cases)} test cases for {extracted_name}")
 
                         # Test the function using TestResult structure
-                        result_tuple = self.function_tools.test_function(code, extracted_name, test_cases)
+                        result_tuple = self.function_tools.test_function_with_cases(code, extracted_name, test_cases)
                         test_result = TestResult.from_tuple(result_tuple)
 
                         if test_result.success:
@@ -523,7 +337,7 @@ Always validate and test functions before attempting to register them."""
         """Validate that function_tools has all required methods with correct signatures."""
         required_methods = {
             'validate_function_code': ['code'],
-            'test_function': ['func_code', 'func_name', 'test_cases'],
+            'test_function_with_cases': ['func_code', 'func_name', 'test_cases'],
             'register_function': ['func_name', 'func_code', 'description'],
             'has_function': ['func_name'],
             'generate_test_cases': ['func_name', 'func_code', 'task_description']
@@ -651,13 +465,10 @@ Always validate and test functions before attempting to register them."""
             if len(func_defs) == 0:
                 return False
 
-            # Enhanced security validation
-            self.security_validator = SecurityValidator()
-            self.security_validator.visit(tree)
-            violations = self.security_validator.get_violations()
-
-            if violations:
-                logger.warning(f"Security violations found in code: {violations}")
+            # Enhanced security validation using function_tools
+            is_valid, status_msg, _ = self.function_tools.validate_function_code(code)
+            if not is_valid:
+                logger.warning(f"Security validation failed: {status_msg}")
                 return False
 
             return True
@@ -703,17 +514,50 @@ Always validate and test functions before attempting to register them."""
         return_type = specification.get('return_type', 'Any')
         examples = specification.get('examples', [])
 
-        # Use PromptBuilder for structured prompt creation
-        prompt = (self.prompt_builder
-                 .reset()
-                 .set_function_name(func_name)
-                 .set_description(description)
-                 .set_parameters(parameters)
-                 .set_return_type(return_type)
-                 .set_examples(examples)
-                 .add_requirement("Avoid any dangerous operations or imports")
-                 .add_requirement("Include comprehensive error handling")
-                 .build())
+        # Create structured prompt directly
+        param_descriptions = []
+        for param in parameters:
+            name = param.get('name', '')
+            param_type = param.get('type', 'Any')
+            desc = param.get('description', 'No description')
+            param_descriptions.append(f"- {name} ({param_type}): {desc}")
+
+        param_str = "\n".join(param_descriptions) if param_descriptions else "No parameters specified."
+
+        example_str = ""
+        if examples:
+            example_lines = []
+            for i, example in enumerate(examples, 1):
+                input_val = example.get('input', '')
+                output_val = example.get('output', '')
+                example_lines.append(f"{i}. Input: {input_val} → Output: {output_val}")
+            example_str = "\n".join(example_lines)
+        else:
+            example_str = "No examples provided."
+
+        prompt = f"""Please create a Python function with the following specifications:
+
+Function Name: {func_name}
+Description: {description}
+Return Type: {return_type}
+
+Parameters:
+{param_str}
+
+Examples:
+{example_str}
+
+Requirements:
+1. Write a complete, working Python function
+2. Include proper type hints for parameters and return value
+3. Include a comprehensive docstring with description, parameters, and return value
+4. Handle edge cases and potential errors appropriately
+5. Use only safe, standard Python libraries (no file I/O, no system calls)
+6. Make the function robust and well-tested
+7. Avoid any dangerous operations or imports
+8. Include comprehensive error handling
+
+Please provide ONLY the Python function code, wrapped in ```python``` code blocks."""
 
         return prompt
 

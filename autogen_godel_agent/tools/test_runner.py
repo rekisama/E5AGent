@@ -1,491 +1,720 @@
 """
-Enhanced Test runner for dynamically generated functions.
+Test Runner and Test Case Generation Module.
 
-Provides secure, cross-platform execution environment for testing generated code
-with comprehensive timeout handling and flexible result comparison.
+This module provides comprehensive test case generation and execution capabilities
+for the Function Creator Agent system. It includes:
+
+1. TestResult: Standardized test result structure
+2. TestCaseGenerator: Enhanced LLM-driven test case generator
+3. Test execution and validation logic
+4. Comprehensive test case generation with multiple strategies
+
+测试运行器和测试用例生成模块，为函数创建代理系统提供全面的测试用例生成和执行能力。
+包括标准化的测试结果结构、增强的LLM驱动测试用例生成器、测试执行和验证逻辑。
 """
 
-import sys
-import io
-import traceback
-import signal
-import time
-import math
+from typing import Dict, List, Any, Optional, Union
 import logging
-from contextlib import contextmanager
-from typing import Dict, List, Any, Tuple, Optional, Union, Callable
-from multiprocessing import Process, Queue
-import platform
+import ast
+import time
+import json
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+import autogen
 
-"""
-1. ✅ 增加支持自定义比较函数
-某些测试用例可能需要定制比较逻辑：
-
-python
-复制
-编辑
-test_case = {
-    "input": {"x": 2},
-    "expected_value": None,
-    "custom_compare": lambda r: isinstance(r, int) and r % 2 == 0
-}
-修改 run_tests 支持：
-
-python
-复制
-编辑
-custom_compare = test_case.get('custom_compare')
-if custom_compare:
-    try:
-        passed = custom_compare(result)
-        if not passed:
-            test_result['success'] = False
-            test_result['error'] = "Custom compare failed"
-            all_passed = False
-    except Exception as e:
-        test_result['success'] = False
-        test_result['error'] = f"Custom compare error: {e}"
-        all_passed = False
-2. ✅ 增加输出捕获功能（可选）
-有些函数可能通过 print() 输出关键中间值。可选支持将标准输出一并捕获：
-
-python
-复制
-编辑
-from contextlib import redirect_stdout
-f = io.StringIO()
-with redirect_stdout(f):
-    result = eval(eval_expr or f"{func_name}(**inputs)", global_scope, local_scope)
-stdout = f.getvalue()
-queue.put((True, result, "", stdout))
-3. 🟡 函数未定义或语法错误时，success == False 但 error 不明确
-在 safe_execute 中，如果：
-
-python
-复制
-编辑
-if func_name not in local_scope:
-    queue.put((False, None, f"Function {func_name} not found"))
-但如果代码根本就语法错、SyntaxError 之类，local_scope 也不会生成，建议统一 exec() 报错时直接退出。
-
-4. 🟡 类型验证范围可扩展
-当前支持基本类型：
-
-python
-复制
-编辑
-'bool', 'str', 'int', 'float', 'number', 'list', 'dict'
-你可以加入：
-
-'set'
-
-'tuple'
-
-'None'
-
-'callable'
-
-5. 🟡 支持测试报告导出（如 JSON）
-可在 run_tests 最后返回时附带结构化字段：
-
-python
-复制
-编辑
-return {
-    "summary": {
-        "passed": passed_count,
-        "failed": failed_count,
-        "total": len(test_results),
-        "message": error_msg,
-        "success": all_passed,
-    },
-    "details": test_results
-}
-"""
+# Import FunctionSignatureParser from secure_executor
+from .secure_executor import FunctionSignatureParser
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
-class TimeoutError(Exception):
-    """Raised when function execution times out."""
-    pass
+
+class TestCaseComplexity(Enum):
+    """Test case complexity levels."""
+    BASIC = "basic"
+    STANDARD = "standard"
+    COMPREHENSIVE = "comprehensive"
 
 
-def _safe_import(name: str):
-    """
-    Safe import function that only allows whitelisted modules.
-
-    Args:
-        name: Module name to import
-
-    Returns:
-        Imported module if safe, raises ImportError otherwise
-    """
-    # Whitelist of safe modules
-    safe_modules = {
-        're', 'math', 'datetime', 'json', 'random', 'string',
-        'itertools', 'functools', 'collections', 'decimal',
-        'fractions', 'statistics', 'uuid', 'hashlib', 'base64'
-    }
-
-    if name in safe_modules:
-        return __import__(name)
-    else:
-        raise ImportError(f"Module '{name}' is not allowed for security reasons")
+class TestCaseComplexity(Enum):
+    """Test case complexity levels."""
+    BASIC = "basic"
+    STANDARD = "standard"
+    COMPREHENSIVE = "comprehensive"
 
 
-def _run_func_in_process(code: str, func_name: str, inputs: Dict[str, Any],
-                        eval_expr: Optional[str], queue: Queue):
-    """
-    Execute function in a separate process for cross-platform timeout support.
+class InputFormat(Enum):
+    """Standardized input formats for test cases."""
+    DICT = "dict"  # {"param1": value1, "param2": value2}
+    ARGS_LIST = "args_list"  # [value1, value2]
+    FUNCTION_CALL = "function_call"  # "func_name(value1, value2)"
 
-    Args:
-        code: Function source code
-        func_name: Name of the function to execute
-        inputs: Input parameters for the function
-        eval_expr: Optional expression to evaluate (for class methods, etc.)
-        queue: Queue to return results
-    """
-    try:
-        # Create secure global scope with essential functions for basic Python functionality
-        global_scope = {
-            '__builtins__': {
-                # Safe built-in functions
-                'len': len, 'str': str, 'int': int, 'float': float,
-                'bool': bool, 'list': list, 'dict': dict, 'tuple': tuple,
-                'set': set, 'range': range, 'enumerate': enumerate,
-                'zip': zip, 'map': map, 'filter': filter, 'sorted': sorted,
-                'sum': sum, 'min': min, 'max': max, 'abs': abs,
-                'round': round, 'isinstance': isinstance,
-                'print': print,
-                # Essential for class definitions and exceptions
-                '__build_class__': __build_class__,
-                'Exception': Exception,
-                'ValueError': ValueError,
-                'TypeError': TypeError,
-                'AttributeError': AttributeError,
-                'KeyError': KeyError,
-                'IndexError': IndexError,
-                'ZeroDivisionError': ZeroDivisionError,
-                'ImportError': ImportError,
-                'NameError': NameError,
-                # Safe import mechanism (restricted to whitelisted modules)
-                '__import__': lambda name, *args, **kwargs: _safe_import(name),
-                # Removed dangerous functions: hasattr, getattr, globals, locals, vars, dir, open, eval, exec
-            },
-            # Essential module variables
-            '__name__': '__main__',
-            '__file__': '<string>',
-            # Pre-import safe modules only
-            're': __import__('re'),
-            'math': __import__('math'),
-            'datetime': __import__('datetime'),
-            'json': __import__('json'),
+
+@dataclass
+class TestGenerationConfig:
+    """Configuration for test case generation."""
+    max_test_cases: int = 8
+    max_combinations: int = 5
+    complexity: TestCaseComplexity = TestCaseComplexity.STANDARD
+    input_format: InputFormat = InputFormat.DICT
+    include_edge_cases: bool = True
+    include_boundary_tests: bool = True
+    use_llm_generation: bool = True
+
+    def get_test_count_by_complexity(self) -> int:
+        """Get test case count based on complexity level."""
+        if self.complexity == TestCaseComplexity.BASIC:
+            return min(3, self.max_test_cases)
+        elif self.complexity == TestCaseComplexity.STANDARD:
+            return min(5, self.max_test_cases)
+        else:  # COMPREHENSIVE
+            return self.max_test_cases
+
+
+@dataclass
+class TestResult:
+    """Standardized test result structure."""
+    success: bool
+    error_msg: str
+    test_results: List[Dict]
+
+    @classmethod
+    def from_tuple(cls, result_tuple: tuple) -> 'TestResult':
+        """Create TestResult from legacy tuple format."""
+        if len(result_tuple) >= 3:
+            return cls(
+                success=result_tuple[0],
+                error_msg=result_tuple[1] or "",
+                test_results=result_tuple[2] or []
+            )
+        else:
+            return cls(success=False, error_msg="Invalid result format", test_results=[])
+
+
+class TestResponseParser:
+    """Robust parser for LLM test case responses with multiple fallback strategies."""
+
+    def __init__(self, max_retries: int = 2, timeout_seconds: int = 30):
+        """
+        Initialize the response parser.
+
+        Args:
+            max_retries: Maximum number of retry attempts for LLM calls
+            timeout_seconds: Timeout for LLM responses
+        """
+        self.max_retries = max_retries
+        self.timeout_seconds = timeout_seconds
+
+    def parse_test_response(self, response: str) -> List[Dict]:
+        """
+        Parse LLM response to extract test cases with robust fallback.
+
+        Args:
+            response: Raw LLM response string
+
+        Returns:
+            List of parsed test case dictionaries
+        """
+        test_cases = []
+
+        # Strategy 1: Try to parse as direct JSON
+        test_cases = self._try_direct_json_parse(response)
+        if test_cases:
+            logger.info(f"Parsed {len(test_cases)} test cases using direct JSON parsing")
+            return test_cases
+
+        # Strategy 2: Extract JSON from markdown code blocks
+        test_cases = self._try_markdown_json_parse(response)
+        if test_cases:
+            logger.info(f"Parsed {len(test_cases)} test cases using markdown JSON extraction")
+            return test_cases
+
+        # Strategy 3: Extract from structured text patterns
+        test_cases = self._try_text_pattern_extraction(response)
+        if test_cases:
+            logger.info(f"Parsed {len(test_cases)} test cases using text pattern extraction")
+            return test_cases
+
+        logger.warning("Failed to parse any test cases from LLM response")
+        return []
+
+    def _try_direct_json_parse(self, response: str) -> List[Dict]:
+        """Try to parse response as direct JSON."""
+        try:
+            parsed = json.loads(response.strip())
+            return self._extract_test_cases_from_json(parsed)
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return []
+
+    def _try_markdown_json_parse(self, response: str) -> List[Dict]:
+        """Try to extract JSON from markdown code blocks."""
+        try:
+            # Look for JSON block in response
+            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(1)
+                parsed = json.loads(json_str)
+                return self._extract_test_cases_from_json(parsed)
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+        return []
+
+    def _extract_test_cases_from_json(self, parsed: Dict) -> List[Dict]:
+        """Extract test cases from parsed JSON structure."""
+        test_cases = []
+
+        if isinstance(parsed, dict):
+            if 'test_cases' in parsed and isinstance(parsed['test_cases'], list):
+                test_cases = parsed['test_cases']
+
+                # Log coverage analysis if available
+                if 'coverage_analysis' in parsed:
+                    coverage = parsed['coverage_analysis']
+                    logger.info(f"Test coverage analysis: {coverage}")
+            elif isinstance(parsed.get('tests'), list):
+                test_cases = parsed['tests']
+        elif isinstance(parsed, list):
+            test_cases = parsed
+
+        return test_cases
+
+    def _try_text_pattern_extraction(self, text: str) -> List[Dict]:
+        """Extract test cases from unstructured text as fallback."""
+        test_cases = []
+
+        # Look for test case patterns in text
+        lines = text.split('\n')
+        current_test = {}
+
+        for line in lines:
+            line = line.strip()
+
+            # Look for test case indicators
+            if any(indicator in line.lower() for indicator in ['test case', 'test:', 'description:']):
+                if current_test:
+                    test_cases.append(current_test)
+                current_test = {'description': line, 'input': {}, 'expected_output': 'auto_generated'}
+
+            elif 'input:' in line.lower():
+                input_part = line.split(':', 1)[1].strip()
+                current_test['input'] = self._parse_input_value(input_part)
+
+            elif 'expected:' in line.lower() or 'output:' in line.lower():
+                output_part = line.split(':', 1)[1].strip()
+                current_test['expected_output'] = output_part
+
+        if current_test:
+            test_cases.append(current_test)
+
+        return test_cases
+
+    def _parse_input_value(self, input_str: str) -> Dict[str, Any]:
+        """Parse input string into dictionary format."""
+        try:
+            # Try to evaluate as Python literal
+            if input_str.startswith('{') and input_str.endswith('}'):
+                return ast.literal_eval(input_str)
+            else:
+                # Convert to dictionary format
+                return {'value': input_str}
+        except (ValueError, SyntaxError):
+            return {'value': input_str}
+
+
+class TestCaseStandardizer:
+    """Standardizes test case formats and structures."""
+
+    def __init__(self, input_format: InputFormat = InputFormat.DICT):
+        """
+        Initialize the standardizer.
+
+        Args:
+            input_format: Preferred input format for test cases
+        """
+        self.input_format = input_format
+
+    def standardize_test_cases(self, test_cases: List[Dict]) -> List[Dict]:
+        """
+        Standardize test case format to ensure consistency.
+
+        Args:
+            test_cases: List of test case dictionaries
+
+        Returns:
+            List of standardized test case dictionaries
+        """
+        standardized = []
+
+        for test_case in test_cases:
+            standardized_case = self._standardize_single_test_case(test_case)
+            if standardized_case:
+                standardized.append(standardized_case)
+
+        return standardized
+
+    def _standardize_single_test_case(self, test_case: Dict) -> Dict[str, Any]:
+        """Standardize a single test case."""
+        # Standard format: input, expected_output, description, test_type
+        standardized_case = {
+            'description': test_case.get('description', 'Test case'),
+            'input': {},
+            'expected_output': 'auto_generated',
+            'test_type': test_case.get('test_type', 'normal'),
+            'reasoning': test_case.get('reasoning', '')
         }
 
-        local_scope = {}
-        exec(code, global_scope, local_scope)
+        # Standardize input format
+        input_value = test_case.get('input', {})
+        standardized_case['input'] = self._standardize_input(input_value)
 
-        if eval_expr:
-            # Support for class methods and complex expressions
-            result = eval(eval_expr, global_scope, local_scope)
+        # Handle different expected output formats
+        if 'expected_output' in test_case:
+            standardized_case['expected_output'] = test_case['expected_output']
+        elif 'expected_value' in test_case:
+            standardized_case['expected_output'] = test_case['expected_value']
+        elif 'expected_type' in test_case:
+            # For type-based tests, store the expected type
+            standardized_case['expected_type'] = test_case['expected_type']
+            standardized_case['expected_output'] = 'type_check'
+        elif 'output' in test_case:
+            standardized_case['expected_output'] = test_case['output']
+
+        return standardized_case
+
+    def _standardize_input(self, input_value: Any) -> Dict[str, Any]:
+        """Standardize input value to dictionary format."""
+        if isinstance(input_value, dict):
+            return input_value
+        elif isinstance(input_value, (list, tuple)):
+            # Convert list/tuple to indexed dictionary
+            return {f'arg_{i}': val for i, val in enumerate(input_value)}
+        elif isinstance(input_value, str):
+            # Try to parse as dictionary or convert to single value
+            try:
+                if input_value.startswith('{') and input_value.endswith('}'):
+                    return ast.literal_eval(input_value)
+                else:
+                    return {'value': input_value}
+            except (ValueError, SyntaxError):
+                return {'value': input_value}
         else:
-            # Standard function execution
-            if func_name not in local_scope:
-                queue.put((False, None, f"Function {func_name} not found"))
-                return
-            result = local_scope[func_name](**inputs)
-
-        queue.put((True, result, ""))
-
-    except Exception as e:
-        queue.put((False, None, f"{type(e).__name__}: {str(e)}"))
+            return {'value': input_value}
 
 
-class EnhancedTestRunner:
+
+class TestCaseGenerator:
     """
-    Enhanced secure test runner with cross-platform timeout support.
+    Enhanced test case generator with multiple strategies.
 
-    Features:
-    - Cross-platform timeout using multiprocessing
-    - Secure execution environment without dangerous built-ins
-    - Flexible result comparison (float tolerance, deep comparison)
-    - Support for class methods and complex expressions
-    - Comprehensive error handling and logging
+    This class provides comprehensive test case generation using both
+    LLM-based intelligent generation and rule-based fallback generation.
     """
 
-    def __init__(self, timeout_seconds: int = 30, float_tolerance: float = 1e-9):
+    def __init__(self, config: TestGenerationConfig = None, llm_config: Dict[str, Any] = None):
         """
-        Initialize enhanced test runner.
+        Initialize the test case generator.
 
         Args:
-            timeout_seconds: Maximum execution time per test
-            float_tolerance: Tolerance for floating point comparisons
+            config: Test generation configuration
+            llm_config: LLM configuration for intelligent generation
         """
-        self.timeout_seconds = timeout_seconds
-        self.float_tolerance = float_tolerance
-        logger.info(f"Enhanced test runner initialized with {timeout_seconds}s timeout")
+        self.config = config or TestGenerationConfig()
+        self.llm_config = llm_config
 
-    def safe_execute(self, code: str, func_name: str,
-                    test_input: Dict[str, Any],
-                    eval_expr: Optional[str] = None) -> Tuple[bool, Any, str]:
+        # Initialize sub-modules
+        self.signature_parser = FunctionSignatureParser()
+        self.standardizer = TestCaseStandardizer(self.config.input_format)
+        self.response_parser = TestResponseParser(max_retries=2, timeout_seconds=30)
+
+    def generate_test_cases(self, func_name: str, func_code: str, task_description: str) -> List[Dict]:
         """
-        Safely execute a function with cross-platform timeout support.
+        Generate test cases for a function.
 
         Args:
-            code: Function source code
-            func_name: Name of the function to execute
-            test_input: Input parameters
-            eval_expr: Optional expression for class methods (e.g., "MyClass().method")
+            func_name: Name of the function
+            func_code: Function source code
+            task_description: Description of what the function should do
 
         Returns:
-            Tuple[bool, Any, str]: (success, result, error_message)
+            List of test case dictionaries
         """
+        specification = {
+            'name': func_name,
+            'description': task_description,
+            'code': func_code
+        }
+
+        return self.generate_enhanced_test_cases(specification, func_code)
+
+    def generate_enhanced_test_cases(self, specification: Dict[str, Any], code: str = "") -> List[Dict]:
+        """
+        Generate enhanced test cases using multiple strategies.
+
+        Args:
+            specification: Function specification with name, description, signature, etc.
+            code: Optional function code for additional context
+
+        Returns:
+            List of standardized test case dictionaries
+        """
+        func_name = specification.get('name', '')
+        description = specification.get('description', '')
+
+        logger.info(f"Generating test cases for function: {func_name}")
+
+        # Try LLM-based generation first if available
+        if self.config.use_llm_generation and self.llm_config:
+            try:
+                llm_tests = self._generate_llm_test_cases(specification, code)
+                if llm_tests:
+                    logger.info(f"Generated {len(llm_tests)} test cases using LLM")
+                    return self.standardizer.standardize_test_cases(llm_tests)
+            except Exception as e:
+                logger.warning(f"LLM test generation failed: {e}, falling back to rule-based generation")
+
+        # Fallback to rule-based generation
+        rule_based_tests = self._generate_rule_based_test_cases(specification, code)
+        logger.info(f"Generated {len(rule_based_tests)} test cases using rule-based approach")
+
+        return self.standardizer.standardize_test_cases(rule_based_tests)
+
+    def _generate_llm_test_cases(self, specification: Dict[str, Any], code: str = "") -> List[Dict]:
+        """Generate test cases using LLM."""
+        func_name = specification.get('name', '')
+        description = specification.get('description', '')
+        signature = specification.get('signature', '')
+        examples = specification.get('examples', [])
+
+        # Create comprehensive prompt for LLM
+        prompt = f"""# Function Analysis for Test Generation
+
+**Function Name:** {func_name}
+**Description:** {description}
+**Signature:** {signature}
+
+**Examples:** {examples if examples else "None provided"}
+
+**Source Code:** {code if code else "Not provided"}
+
+Please analyze this function and generate comprehensive test cases that cover:
+1. Normal operation scenarios
+2. Edge cases (empty inputs, None values, etc.)
+3. Boundary conditions (min/max values, limits)
+4. Error conditions (invalid inputs, type mismatches)
+5. Special cases based on function semantics
+
+Generate the test cases in JSON format with this structure:
+{{
+    "test_cases": [
+        {{
+            "description": "Clear description of what this test validates",
+            "input": {{"param1": "value1", "param2": "value2"}},
+            "expected_output": "expected_result_or_type",
+            "test_type": "normal|edge_case|boundary|error_case",
+            "reasoning": "Why this test case is important"
+        }}
+    ]
+}}"""
+
         try:
-            # Use multiprocessing for true cross-platform timeout
-            queue = Queue()
-            process = Process(
-                target=_run_func_in_process,
-                args=(code, func_name, test_input, eval_expr, queue)
+            # Create temporary LLM agent for test generation
+            llm_agent = autogen.AssistantAgent(
+                name="test_generator",
+                system_message="You are an expert at generating comprehensive test cases for Python functions.",
+                llm_config=self.llm_config,
             )
 
-            process.start()
-            process.join(timeout=self.timeout_seconds)
+            # Create temporary user proxy for LLM interaction
+            user_proxy = autogen.UserProxyAgent(
+                name="test_user",
+                human_input_mode="NEVER",
+                max_consecutive_auto_reply=1,
+                code_execution_config=False,
+            )
 
-            if process.is_alive():
-                # Process timed out
-                process.terminate()
-                process.join()  # Wait for cleanup
-                error_msg = f"Execution timed out after {self.timeout_seconds} seconds"
-                logger.warning(f"Function {func_name} timed out")
-                return False, None, error_msg
+            # Get LLM response
+            user_proxy.initiate_chat(llm_agent, message=prompt)
 
-            # Get result from queue
-            if not queue.empty():
-                success, result, error_msg = queue.get()
-                if success:
-                    logger.debug(f"Function {func_name} executed successfully")
-                else:
-                    logger.warning(f"Function {func_name} failed: {error_msg}")
-                return success, result, error_msg
-            else:
-                return False, None, "No result returned from process"
+            # Extract response
+            messages = user_proxy.chat_messages.get(llm_agent, [])
+            llm_response = messages[-1]['content'] if messages else ""
+
+            # Parse response using robust parser
+            test_cases = self.response_parser.parse_test_response(llm_response)
+
+            # Clean up
+            user_proxy.chat_messages.clear()
+
+            return test_cases
 
         except Exception as e:
-            error_msg = f"Process execution error: {e}"
-            logger.error(f"Error executing {func_name}: {error_msg}")
-            return False, None, error_msg
-    
-    def flexible_compare(self, actual: Any, expected: Any) -> Tuple[bool, str]:
-        """
-        Flexible comparison supporting different data types.
+            logger.warning(f"LLM test generation failed: {e}")
+            return []
 
-        Args:
-            actual: Actual result from function
-            expected: Expected result
 
-        Returns:
-            Tuple[bool, str]: (is_equal, error_message)
-        """
+
+    def _generate_rule_based_test_cases(self, specification: Dict[str, Any], code: str = "") -> List[Dict]:
+        """Generate test cases using rule-based approach."""
+        func_name = specification.get('name', '')
+        description = specification.get('description', '')
+        signature = specification.get('signature', '')
+        examples = specification.get('examples', [])
+
+        test_cases = []
+
+        # Start with existing examples if available
+        if examples:
+            for i, example in enumerate(examples):
+                test_cases.append({
+                    'description': f'Example {i + 1} from specification',
+                    'input': self._parse_input_value(str(example.get('input', ''))),
+                    'expected_output': str(example.get('output', 'auto_generated')),
+                    'test_type': 'normal',
+                    'reasoning': 'Based on provided example'
+                })
+
+        # Generate parameter-based tests if signature is available
+        if signature and len(test_cases) < self.config.max_test_cases:
+            param_tests = self._generate_parameter_based_tests(signature, func_name)
+            test_cases.extend(param_tests)
+
+        # Generate semantic tests based on function name and description
+        if len(test_cases) < self.config.max_test_cases:
+            semantic_tests = self._generate_semantic_tests(func_name, description)
+            test_cases.extend(semantic_tests)
+
+        # Add edge cases if configured
+        if self.config.include_edge_cases and len(test_cases) < self.config.max_test_cases:
+            edge_tests = self._generate_edge_case_tests(func_name, description)
+            test_cases.extend(edge_tests)
+
+        # Add boundary tests if configured
+        if self.config.include_boundary_tests and len(test_cases) < self.config.max_test_cases:
+            boundary_tests = self._generate_boundary_tests(func_name, description)
+            test_cases.extend(boundary_tests)
+
+        # Limit to configured maximum
+        return test_cases[:self.config.get_test_count_by_complexity()]
+
+    def _generate_parameter_based_tests(self, signature: str, func_name: str) -> List[Dict]:
+        """Generate tests based on function signature analysis."""
+        test_cases = []
+
+        # Parse function signature
+        parameters = self.signature_parser.parse_signature(signature)
+
+        if not parameters:
+            return test_cases
+
+        # Generate basic parameter tests
+        for param in parameters:
+            param_name = param['name']
+            param_type = param['type']
+
+            # Generate type-appropriate test values
+            test_values = self._get_test_values_for_type(param_type)
+
+            for value in test_values[:2]:  # Limit to 2 values per parameter
+                test_cases.append({
+                    'description': f'Test {func_name} with {param_name}={repr(value)}',
+                    'input': {param_name: value},
+                    'expected_output': 'auto_generated',
+                    'test_type': 'parameter_test',
+                    'reasoning': f'Testing parameter {param_name} of type {param_type}'
+                })
+
+        return test_cases
+
+    def _get_test_values_for_type(self, param_type: str) -> List[Any]:
+        """Get appropriate test values for a parameter type."""
+        type_lower = param_type.lower()
+
+        if 'str' in type_lower:
+            return ['test_string', '', 'special!@#$%^&*()']
+        elif 'int' in type_lower:
+            return [0, 1, -1, 100]
+        elif 'float' in type_lower:
+            return [0.0, 1.5, -2.7, 3.14159]
+        elif 'bool' in type_lower:
+            return [True, False]
+        elif 'list' in type_lower:
+            return [[], [1, 2, 3], ['a', 'b']]
+        elif 'dict' in type_lower:
+            return [{}, {'key': 'value'}, {'a': 1, 'b': 2}]
+        else:
+            return ['test_value', 0, True, []]
+
+    def _parse_input_value(self, input_str: str) -> Dict[str, Any]:
+        """Parse input string into dictionary format."""
         try:
-            # Handle None values
-            if actual is None and expected is None:
-                return True, ""
-            if actual is None or expected is None:
-                return False, f"Expected {expected}, got {actual}"
-
-            # Float comparison with tolerance
-            if isinstance(actual, float) and isinstance(expected, float):
-                if math.isclose(actual, expected, rel_tol=self.float_tolerance, abs_tol=self.float_tolerance):
-                    return True, ""
-                else:
-                    return False, f"Expected {expected}, got {actual} (difference: {abs(actual - expected)})"
-
-            # Mixed number comparison
-            if isinstance(actual, (int, float)) and isinstance(expected, (int, float)):
-                if math.isclose(float(actual), float(expected), rel_tol=self.float_tolerance, abs_tol=self.float_tolerance):
-                    return True, ""
-                else:
-                    return False, f"Expected {expected}, got {actual}"
-
-            # String comparison (case-insensitive option could be added)
-            if isinstance(actual, str) and isinstance(expected, str):
-                if actual == expected:
-                    return True, ""
-                else:
-                    return False, f"Expected '{expected}', got '{actual}'"
-
-            # List comparison (order matters)
-            if isinstance(actual, list) and isinstance(expected, list):
-                if len(actual) != len(expected):
-                    return False, f"Expected list of length {len(expected)}, got {len(actual)}"
-
-                for i, (a, e) in enumerate(zip(actual, expected)):
-                    is_equal, error = self.flexible_compare(a, e)
-                    if not is_equal:
-                        return False, f"List element {i}: {error}"
-                return True, ""
-
-            # Dictionary comparison (order doesn't matter)
-            if isinstance(actual, dict) and isinstance(expected, dict):
-                if set(actual.keys()) != set(expected.keys()):
-                    return False, f"Expected keys {set(expected.keys())}, got {set(actual.keys())}"
-
-                for key in expected:
-                    is_equal, error = self.flexible_compare(actual[key], expected[key])
-                    if not is_equal:
-                        return False, f"Dict key '{key}': {error}"
-                return True, ""
-
-            # Set comparison (order doesn't matter)
-            if isinstance(actual, set) and isinstance(expected, set):
-                if actual == expected:
-                    return True, ""
-                else:
-                    return False, f"Expected set {expected}, got {actual}"
-
-            # Default comparison
-            if actual == expected:
-                return True, ""
+            # Try to evaluate as Python literal
+            if input_str.startswith('{') and input_str.endswith('}'):
+                return ast.literal_eval(input_str)
             else:
-                return False, f"Expected {expected}, got {actual}"
+                # Convert to dictionary format
+                return {'value': input_str}
+        except (ValueError, SyntaxError):
+            return {'value': input_str}
 
-        except Exception as e:
-            return False, f"Comparison error: {e}"
-    
-    def validate_result(self, result: Any, expected_type: str) -> Tuple[bool, str]:
+    def _generate_semantic_tests(self, func_name: str, description: str) -> List[Dict]:
+        """Generate tests based on semantic analysis of function name and description."""
+        test_cases = []
+
+        # Analyze function purpose from name and description
+        func_lower = func_name.lower()
+        desc_lower = description.lower() if description else ""
+
+        # Common function patterns and their test scenarios
+        if any(word in func_lower for word in ['validate', 'check', 'verify']):
+            test_cases.extend(self._generate_validation_tests(func_name))
+        elif any(word in func_lower for word in ['calculate', 'compute', 'math']):
+            test_cases.extend(self._generate_calculation_tests(func_name))
+        elif any(word in func_lower for word in ['format', 'convert', 'transform']):
+            test_cases.extend(self._generate_transformation_tests(func_name))
+        elif any(word in func_lower for word in ['parse', 'extract', 'analyze']):
+            test_cases.extend(self._generate_parsing_tests(func_name))
+
+        return test_cases
+
+    def _generate_validation_tests(self, func_name: str) -> List[Dict]:
+        """Generate tests for validation functions."""
+        return [
+            {
+                'description': f'Test {func_name} with valid input',
+                'input': {'value': 'valid_input'},
+                'expected_output': True,
+                'test_type': 'validation_positive',
+                'reasoning': 'Testing positive validation case'
+            },
+            {
+                'description': f'Test {func_name} with invalid input',
+                'input': {'value': 'invalid_input'},
+                'expected_output': False,
+                'test_type': 'validation_negative',
+                'reasoning': 'Testing negative validation case'
+            }
+        ]
+
+    def _generate_calculation_tests(self, func_name: str) -> List[Dict]:
+        """Generate tests for calculation functions."""
+        return [
+            {
+                'description': f'Test {func_name} with positive numbers',
+                'input': {'x': 5, 'y': 3},
+                'expected_output': 'auto_generated',
+                'test_type': 'calculation_positive',
+                'reasoning': 'Testing calculation with positive values'
+            },
+            {
+                'description': f'Test {func_name} with zero',
+                'input': {'x': 0, 'y': 0},
+                'expected_output': 'auto_generated',
+                'test_type': 'calculation_zero',
+                'reasoning': 'Testing calculation with zero values'
+            }
+        ]
+
+    def _generate_transformation_tests(self, func_name: str) -> List[Dict]:
+        """Generate tests for transformation functions."""
+        return [
+            {
+                'description': f'Test {func_name} with typical input',
+                'input': {'data': 'sample_data'},
+                'expected_output': 'auto_generated',
+                'test_type': 'transformation_normal',
+                'reasoning': 'Testing transformation with normal input'
+            }
+        ]
+
+    def _generate_parsing_tests(self, func_name: str) -> List[Dict]:
+        """Generate tests for parsing functions."""
+        return [
+            {
+                'description': f'Test {func_name} with well-formed input',
+                'input': {'text': 'well_formed_input'},
+                'expected_output': 'auto_generated',
+                'test_type': 'parsing_valid',
+                'reasoning': 'Testing parsing with valid input'
+            }
+        ]
+
+    def _generate_edge_case_tests(self, func_name: str, description: str) -> List[Dict]:
+        """Generate edge case tests."""
+        return [
+            {
+                'description': f'Test {func_name} with empty input',
+                'input': {'value': ''},
+                'expected_output': 'auto_generated',
+                'test_type': 'edge_case',
+                'reasoning': 'Testing edge case with empty input'
+            },
+            {
+                'description': f'Test {func_name} with None input',
+                'input': {'value': None},
+                'expected_output': 'auto_generated',
+                'test_type': 'edge_case',
+                'reasoning': 'Testing edge case with None input'
+            }
+        ]
+
+    def _generate_boundary_tests(self, func_name: str, description: str) -> List[Dict]:
+        """Generate boundary value tests."""
+        return [
+            {
+                'description': f'Test {func_name} with minimum boundary',
+                'input': {'value': 0},
+                'expected_output': 'auto_generated',
+                'test_type': 'boundary_test',
+                'reasoning': 'Testing minimum boundary value'
+            },
+            {
+                'description': f'Test {func_name} with maximum boundary',
+                'input': {'value': 999999},
+                'expected_output': 'auto_generated',
+                'test_type': 'boundary_test',
+                'reasoning': 'Testing maximum boundary value'
+            }
+        ]
+
+
+
+    def normalize_test_input(self, test_cases) -> List[Dict]:
         """
-        Validate function result against expected type.
-        
+        Normalize test input to handle multiple formats.
+
         Args:
-            result: The actual result from function execution
-            expected_type: Expected type ('bool', 'str', 'int', 'float', 'list', 'dict', 'number')
-        
-        Returns:
-            (is_valid, error_message)
-        """
-        try:
-            if expected_type == 'bool':
-                if not isinstance(result, bool):
-                    return False, f"Expected bool, got {type(result).__name__}"
-            elif expected_type == 'str':
-                if not isinstance(result, str):
-                    return False, f"Expected str, got {type(result).__name__}"
-            elif expected_type == 'int':
-                if not isinstance(result, int):
-                    return False, f"Expected int, got {type(result).__name__}"
-            elif expected_type == 'float':
-                if not isinstance(result, float):
-                    return False, f"Expected float, got {type(result).__name__}"
-            elif expected_type == 'number':
-                if not isinstance(result, (int, float)):
-                    return False, f"Expected number, got {type(result).__name__}"
-            elif expected_type == 'list':
-                if not isinstance(result, list):
-                    return False, f"Expected list, got {type(result).__name__}"
-            elif expected_type == 'dict':
-                if not isinstance(result, dict):
-                    return False, f"Expected dict, got {type(result).__name__}"
-            
-            return True, ""
-            
-        except Exception as e:
-            return False, f"Validation error: {e}"
-    
-    def run_tests(self, func_code: str, func_name: str,
-                  test_cases: List[Dict[str, Any]],
-                  eval_expr: Optional[str] = None) -> Tuple[bool, str, List[Dict]]:
-        """
-        Run all test cases for a function with enhanced comparison.
-
-        Args:
-            func_code: Function source code
-            func_name: Name of the function to test
-            test_cases: List of test cases
-            eval_expr: Optional expression for class methods
+            test_cases: Test cases in various formats (List[Dict], str, Dict)
 
         Returns:
-            Tuple[bool, str, List[Dict]]: (all_passed, error_message, test_results)
+            List of normalized test case dictionaries
         """
         if not test_cases:
-            # If no test cases provided, just try to compile the function
+            return []
+
+        # Handle different input formats
+        if isinstance(test_cases, str):
             try:
-                success, result = self.safe_execute(func_code, func_name, {}, eval_expr)
-                if success or "not found" not in str(result):
-                    logger.info(f"Function {func_name} compiled successfully")
-                    return True, "No test cases provided, but function compiled successfully", []
-                else:
-                    return False, f"Function {func_name} compilation failed", []
-            except Exception as e:
-                return False, f"Function compilation failed: {e}", []
+                import json
+                # Try to parse as JSON
+                parsed = json.loads(test_cases)
+                if isinstance(parsed, list):
+                    return parsed
+                elif isinstance(parsed, dict):
+                    return [parsed]
+            except json.JSONDecodeError:
+                # Treat as single test case description
+                return [{'description': test_cases, 'input': {}, 'expected_output': 'auto_generated'}]
 
-        test_results = []
-        all_passed = True
+        elif isinstance(test_cases, dict):
+            return [test_cases]
 
-        for i, test_case in enumerate(test_cases):
-            test_input = test_case.get('input', {})
-            expected_type = test_case.get('expected_type', 'any')
-            expected_value = test_case.get('expected_value')
-            expected_output = test_case.get('expected_output')  # Alternative key
-            description = test_case.get('description', f'Test case {i+1}')
+        elif isinstance(test_cases, list):
+            return test_cases
 
-            # Use expected_output if expected_value not provided
-            if expected_value is None and expected_output is not None:
-                expected_value = expected_output
-
-            logger.debug(f"Running test case {i+1}: {description}")
-
-            # Execute the test with enhanced security
-            success, result, error_msg = self.safe_execute(
-                func_code, func_name, test_input, eval_expr
-            )
-
-            test_result = {
-                'description': description,
-                'input': test_input,
-                'success': success,
-                'result': result,
-                'error': error_msg,
-                'passed': success  # For backward compatibility
-            }
-
-            if success:
-                # Validate result type if specified
-                if expected_type != 'any':
-                    type_valid, type_error = self.validate_result(result, expected_type)
-                    if not type_valid:
-                        test_result['success'] = False
-                        test_result['passed'] = False
-                        test_result['error'] = type_error
-                        all_passed = False
-                        logger.warning(f"Type validation failed for {func_name}: {type_error}")
-
-                # Enhanced value comparison
-                if expected_value is not None:
-                    is_equal, compare_error = self.flexible_compare(result, expected_value)
-                    if not is_equal:
-                        test_result['success'] = False
-                        test_result['passed'] = False
-                        test_result['error'] = compare_error
-                        all_passed = False
-                        logger.warning(f"Value comparison failed for {func_name}: {compare_error}")
-                    else:
-                        logger.debug(f"Test case {i+1} passed: {description}")
-            else:
-                all_passed = False
-                logger.warning(f"Test case {i+1} failed: {error_msg}")
-
-            test_results.append(test_result)
-
-        if all_passed:
-            logger.info(f"All {len(test_results)} tests passed for {func_name}")
-            return True, "All tests passed", test_results
         else:
-            failed_count = sum(1 for r in test_results if not r.get('success', False))
-            error_msg = f"{failed_count} out of {len(test_results)} tests failed"
-            logger.warning(f"Function {func_name}: {error_msg}")
-            return False, error_msg, test_results
+            return []
 
 
-# Backward compatibility
-TestRunner = EnhancedTestRunner
+# Backward compatibility alias
+EnhancedTestCaseGenerator = TestCaseGenerator
