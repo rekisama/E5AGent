@@ -23,14 +23,24 @@ from typing import Dict, List, Any, Union, Optional, Tuple
 import logging
 
 # Import modular components from tools
-from ..tools.test_runner import (
-    TestCaseGenerator as ModularTestCaseGenerator,
-    TestGenerationConfig,
-    TestCaseComplexity,
-    InputFormat,
-    TestResult
-)
-from ..tools.secure_executor import FunctionSignatureParser
+try:
+    from ..tools.test_runner import (
+        TestCaseGenerator as ModularTestCaseGenerator,
+        TestGenerationConfig,
+        TestCaseComplexity,
+        InputFormat,
+        TestResult
+    )
+    from ..tools.secure_executor import FunctionSignatureParser
+except ImportError:
+    from tools.test_runner import (
+        TestCaseGenerator as ModularTestCaseGenerator,
+        TestGenerationConfig,
+        TestCaseComplexity,
+        InputFormat,
+        TestResult
+    )
+    from tools.secure_executor import FunctionSignatureParser
 
 # Configure logger
 logger = logging.getLogger(__name__)

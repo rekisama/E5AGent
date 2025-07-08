@@ -13,7 +13,7 @@ and determines whether new functions need to be created.
 使用 autogen 构建 AssistantAgent，搭配临时 UserProxyAgent，模拟多轮 Agent 之间的对话和推理过程。
 由 LLM 执行判断，它通过模拟调用内置的工具函数（如 search_functions()）了解已有函数，再根据语义分析判断是否满足用户任务，如果不满足就建议创建新函数。
 提供三种系统内函数搜索能力
-模拟模拟模拟
+
 search_functions(query)
 list_all_functions()
 get_function_info(name)
@@ -37,6 +37,11 @@ from tools.function_tools import get_function_tools
 from tools.session_manager import get_session_manager
 from tools.response_parser import get_response_parser
 from tools.agent_pool import get_user_proxy_pool
+from tools.function_composer import get_function_composer  # 新增：函数组合器
+try:
+    from ..config import Config
+except ImportError:
+    from config import Config
 
 
 class TaskPlannerAgent:
@@ -52,6 +57,19 @@ class TaskPlannerAgent:
     """
 
     def __init__(self, llm_config: Dict[str, Any], max_tokens_per_minute: int = 10000):
+        
+        if llm_config is None:
+            try:
+                # Validate configuration first
+                Config.validate_config()
+                llm_config = Config.get_llm_config()
+                logger.info("Using LLM configuration from config.py")
+            except (ValueError, RuntimeError) as e:
+                logger.error(f"Failed to get LLM config: {e}")
+                raise
+
+        self.llm_config = llm_config
+
         self.function_tools = get_function_tools()
         self.max_tokens_per_minute = max_tokens_per_minute
 
@@ -163,7 +181,7 @@ Examples: "email validation" → "validation" → "check"
             str: A formatted list of all registered functions with basic information.
         """
         try:
-            functions = self.function_tools.list_all_functions()
+            functions = self.function_tools.list_functions()
             if not functions:
                 return "No functions are currently registered in the system."
 
@@ -294,6 +312,60 @@ The JSON must be wrapped in ```json code blocks and be valid JSON."""
             # Parse the response to extract structured information
             analysis_result = self.response_parser.parse_llm_analysis(llm_response, task_description)
 
+            # 🧩 新增：函数组合 Fallback 分支
+            # 如果没有找到完全匹配的函数，尝试函数组合
+            if not analysis_result.get('function_found', False) and analysis_result.get('needs_new_function', True):
+                logger.info("未找到匹配函数，尝试函数组合...")
+
+                try:
+                    composer = get_function_composer()
+                    can_compose, compose_reason = composer.can_compose_for_task(task_description)
+
+                    if can_compose:
+                        logger.info("开始尝试函数组合")
+                        success, message, composite_func = composer.compose_functions(task_description)
+
+                        if success:
+                            # 更新分析结果，表示通过组合解决了任务
+                            analysis_result.update({
+                                'status': 'completed_with_composition',
+                                'function_found': True,
+                                'needs_new_function': False,
+                                'composition_used': True,
+                                'composite_function': {
+                                    'name': composite_func.name,
+                                    'description': composite_func.description,
+                                    'component_functions': composite_func.component_functions
+                                },
+                                'message': f"成功通过函数组合解决任务: {composite_func.name}",
+                                'solution_type': 'function_composition'
+                            })
+                            logger.info(f"函数组合成功: {composite_func.name}")
+                        else:
+                            # 组合失败，保持原有的创建新函数建议
+                            analysis_result.update({
+                                'composition_attempted': True,
+                                'composition_failed': True,
+                                'composition_failure_reason': message,
+                                'fallback_to_creation': True
+                            })
+                            logger.warning(f"函数组合失败: {message}")
+                    else:
+                        # 不适合组合，记录原因
+                        analysis_result.update({
+                            'composition_evaluated': True,
+                            'composition_not_suitable': True,
+                            'composition_reason': compose_reason
+                        })
+                        logger.info(f"不适合函数组合: {compose_reason}")
+
+                except Exception as e:
+                    logger.error(f"函数组合过程中发生错误: {e}")
+                    analysis_result.update({
+                        'composition_error': True,
+                        'composition_error_message': str(e)
+                    })
+
             # Store in session context
             session.add_message({
                 'task': task_description,
@@ -326,9 +398,3 @@ The JSON must be wrapped in ```json code blocks and be valid JSON."""
     def cleanup_old_sessions(self, max_age_hours: int = 24):
         """Clean up old sessions to prevent memory leaks."""
         return self.session_manager.cleanup_old_sessions(max_age_hours)
-    
-
-
-
-
-

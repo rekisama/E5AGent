@@ -72,9 +72,14 @@ logger = logging.getLogger(__name__)
 # Add parent directory to path for imports (use insert for priority)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ..tools.function_tools import get_function_tools
-from ..tools.test_runner import TestResult
-from ..config import Config
+try:
+    from ..tools.function_tools import get_function_tools
+    from ..tools.test_runner import TestResult
+    from ..config import Config
+except ImportError:
+    from tools.function_tools import get_function_tools
+    from tools.test_runner import TestResult
+    from config import Config
 
 
 

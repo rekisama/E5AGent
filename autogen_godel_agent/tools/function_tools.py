@@ -422,6 +422,82 @@ test_passed = False
         """Get registry statistics."""
         return self.registry.get_registry_stats()
 
+    def search_functions(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Search for functions based on query string.
+
+        Args:
+            query: Search query (can match function name, description, or keywords)
+
+        Returns:
+            List of matching function information dictionaries
+        """
+        try:
+            all_functions = self.list_functions()
+            matching_functions = []
+
+            query_lower = query.lower().strip()
+            if not query_lower:
+                return []
+
+            for func_name in all_functions:
+                # Skip metadata entries
+                if func_name in ['metadata', 'last_updated', 'version', 'total_functions']:
+                    continue
+
+                try:
+                    func_info = self.get_function_info(func_name)
+                    if not func_info or not isinstance(func_info, dict):
+                        continue
+
+                    # Search in function name
+                    name_match = query_lower in func_name.lower()
+
+                    # Search in description
+                    description = func_info.get('description', '').lower()
+                    desc_match = query_lower in description
+
+                    # Search in code (if available)
+                    code = func_info.get('code', '').lower()
+                    code_match = query_lower in code
+
+                    # If any match found, add to results
+                    if name_match or desc_match or code_match:
+                        match_info = {
+                            'name': func_name,
+                            'description': func_info.get('description', 'No description'),
+                            'signature': func_info.get('signature', 'No signature available'),
+                            'match_type': []
+                        }
+
+                        # Record match types
+                        if name_match:
+                            match_info['match_type'].append('name')
+                        if desc_match:
+                            match_info['match_type'].append('description')
+                        if code_match:
+                            match_info['match_type'].append('code')
+
+                        matching_functions.append(match_info)
+
+                except Exception as e:
+                    logger.debug(f"Error processing function {func_name} during search: {e}")
+                    continue
+
+            # Sort by relevance (name matches first, then description matches)
+            matching_functions.sort(key=lambda x: (
+                'name' not in x['match_type'],  # Name matches first
+                'description' not in x['match_type'],  # Then description matches
+                x['name']  # Finally alphabetical
+            ))
+
+            logger.info(f"Search for '{query}' found {len(matching_functions)} matches")
+            return matching_functions
+
+        except Exception as e:
+            logger.error(f"Function search failed: {e}")
+            return []
+
 
 # Factory function for creating FunctionTools instances
 def create_function_tools(llm_config: Dict[str, Any] = None,

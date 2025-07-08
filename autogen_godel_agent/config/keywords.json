@@ -1,0 +1,150 @@
+{
+  "function_matching_keywords": {
+    "data_processing": {
+      "chinese": ["数据", "处理", "清洗", "预处理", "转换", "格式化", "标准化", "归一化"],
+      "english": ["data", "process", "clean", "preprocess", "transform", "format", "normalize", "standardize"]
+    },
+    "file_operations": {
+      "chinese": ["文件", "读取", "写入", "保存", "加载", "导入", "导出", "路径"],
+      "english": ["file", "read", "write", "save", "load", "import", "export", "path"]
+    },
+    "data_analysis": {
+      "chinese": ["分析", "统计", "计算", "求和", "平均", "最大", "最小", "方差"],
+      "english": ["analyze", "analysis", "statistics", "calculate", "sum", "average", "mean", "max", "min", "variance"]
+    },
+    "visualization": {
+      "chinese": ["图表", "可视化", "绘图", "图像", "图形", "展示", "显示"],
+      "english": ["chart", "plot", "graph", "visualize", "visualization", "image", "display", "show"]
+    },
+    "machine_learning": {
+      "chinese": ["机器学习", "模型", "训练", "预测", "分类", "回归", "聚类", "特征"],
+      "english": ["machine", "learning", "model", "train", "predict", "classification", "regression", "cluster", "feature"]
+    },
+    "database": {
+      "chinese": ["数据库", "查询", "插入", "更新", "删除", "连接", "表", "字段"],
+      "english": ["database", "query", "insert", "update", "delete", "connect", "table", "field", "sql"]
+    },
+    "web_scraping": {
+      "chinese": ["爬虫", "抓取", "网页", "解析", "提取", "下载", "请求"],
+      "english": ["scrape", "crawl", "web", "parse", "extract", "download", "request", "html"]
+    },
+    "text_processing": {
+      "chinese": ["文本", "字符串", "分词", "匹配", "替换", "搜索", "正则"],
+      "english": ["text", "string", "tokenize", "match", "replace", "search", "regex", "pattern"]
+    },
+    "mathematical": {
+      "chinese": ["数学", "计算", "函数", "公式", "算法", "运算", "求解"],
+      "english": ["math", "mathematical", "calculate", "function", "formula", "algorithm", "compute", "solve"]
+    },
+    "image_processing": {
+      "chinese": ["图像", "图片", "处理", "滤波", "变换", "识别", "检测"],
+      "english": ["image", "picture", "process", "filter", "transform", "recognize", "detect", "opencv"]
+    },
+    "api_integration": {
+      "chinese": ["接口", "API", "调用", "请求", "响应", "集成", "服务"],
+      "english": ["api", "interface", "call", "request", "response", "integrate", "service", "endpoint"]
+    },
+    "data_formats": {
+      "chinese": ["CSV", "JSON", "XML", "Excel", "PDF", "格式", "解析"],
+      "english": ["csv", "json", "xml", "excel", "pdf", "format", "parse", "serialize"]
+    }
+  },
+  "task_complexity_keywords": {
+    "simple": {
+      "chinese": ["简单", "基础", "单一", "直接"],
+      "english": ["simple", "basic", "single", "direct", "easy"]
+    },
+    "moderate": {
+      "chinese": ["中等", "一般", "标准", "常规"],
+      "english": ["moderate", "standard", "normal", "regular", "typical"]
+    },
+    "complex": {
+      "chinese": ["复杂", "高级", "多步骤", "综合", "深度"],
+      "english": ["complex", "advanced", "multi-step", "comprehensive", "deep", "sophisticated"]
+    },
+    "very_complex": {
+      "chinese": ["非常复杂", "极其复杂", "超级复杂", "多层次", "大规模"],
+      "english": ["very complex", "extremely complex", "super complex", "multi-level", "large-scale"]
+    }
+  },
+  "step_indicators": {
+    "chinese": ["首先", "然后", "接着", "最后", "步骤", "阶段", "第一", "第二", "第三"],
+    "english": ["first", "then", "next", "finally", "step", "stage", "phase", "initially", "subsequently"]
+  },
+  "data_types": {
+    "structured": {
+      "chinese": ["表格", "数据框", "矩阵", "数组", "列表"],
+      "english": ["table", "dataframe", "matrix", "array", "list", "structured"]
+    },
+    "unstructured": {
+      "chinese": ["文本", "图像", "音频", "视频", "非结构化"],
+      "english": ["text", "image", "audio", "video", "unstructured", "raw"]
+    },
+    "semi_structured": {
+      "chinese": ["JSON", "XML", "半结构化", "配置"],
+      "english": ["json", "xml", "semi-structured", "config", "markup"]
+    }
+  },
+  "operation_types": {
+    "create": {
+      "chinese": ["创建", "生成", "构建", "制作", "建立"],
+      "english": ["create", "generate", "build", "make", "construct", "produce"]
+    },
+    "read": {
+      "chinese": ["读取", "获取", "提取", "查看", "访问"],
+      "english": ["read", "get", "fetch", "extract", "access", "retrieve"]
+    },
+    "update": {
+      "chinese": ["更新", "修改", "编辑", "改变", "调整"],
+      "english": ["update", "modify", "edit", "change", "adjust", "alter"]
+    },
+    "delete": {
+      "chinese": ["删除", "移除", "清除", "去掉", "消除"],
+      "english": ["delete", "remove", "clear", "eliminate", "erase"]
+    },
+    "transform": {
+      "chinese": ["转换", "变换", "映射", "转化", "改造"],
+      "english": ["transform", "convert", "map", "translate", "reshape"]
+    },
+    "analyze": {
+      "chinese": ["分析", "检查", "评估", "审查", "研究"],
+      "english": ["analyze", "examine", "evaluate", "assess", "study", "investigate"]
+    }
+  },
+  "quality_indicators": {
+    "high_quality": {
+      "chinese": ["高质量", "优秀", "精确", "准确", "可靠"],
+      "english": ["high-quality", "excellent", "precise", "accurate", "reliable", "robust"]
+    },
+    "performance": {
+      "chinese": ["性能", "效率", "速度", "优化", "快速"],
+      "english": ["performance", "efficiency", "speed", "optimize", "fast", "quick"]
+    },
+    "scalability": {
+      "chinese": ["可扩展", "扩展性", "规模", "大数据", "批量"],
+      "english": ["scalable", "scalability", "scale", "big-data", "batch", "bulk"]
+    }
+  },
+  "domain_specific": {
+    "finance": {
+      "chinese": ["金融", "财务", "投资", "股票", "价格", "收益"],
+      "english": ["finance", "financial", "investment", "stock", "price", "profit", "revenue"]
+    },
+    "healthcare": {
+      "chinese": ["医疗", "健康", "病人", "诊断", "治疗", "药物"],
+      "english": ["healthcare", "medical", "health", "patient", "diagnosis", "treatment", "medicine"]
+    },
+    "education": {
+      "chinese": ["教育", "学习", "课程", "学生", "教学", "培训"],
+      "english": ["education", "learning", "course", "student", "teaching", "training"]
+    },
+    "ecommerce": {
+      "chinese": ["电商", "购物", "订单", "商品", "客户", "销售"],
+      "english": ["ecommerce", "shopping", "order", "product", "customer", "sales", "retail"]
+    },
+    "social_media": {
+      "chinese": ["社交", "媒体", "用户", "内容", "互动", "分享"],
+      "english": ["social", "media", "user", "content", "interaction", "share", "post"]
+    }
+  }
+}

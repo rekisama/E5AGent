@@ -65,5 +65,38 @@
     "created_at": "2025-07-04T15:15:51.887353",
     "updated_at": "2025-07-04T15:15:51.887353",
     "version": 1
+  },
+  "read_csv_file": {
+    "name": "read_csv_file",
+    "code": "\ndef read_csv_file(file_path: str) -> dict:\n    \"\"\"读取CSV文件并返回数据\"\"\"\n    import pandas as pd\n    try:\n        df = pd.read_csv(file_path)\n        return {\n            'data': df.to_dict('records'),\n            'columns': df.columns.tolist(),\n            'shape': df.shape\n        }\n    except Exception as e:\n        return {'error': str(e)}\n",
+    "description": "读取CSV文件并返回结构化数据",
+    "task_origin": "示例函数",
+    "test_cases": [],
+    "hash": "4a56c37b917d519fd322a25bf3cefda4",
+    "created_at": "2025-07-04T15:54:26.949063",
+    "updated_at": "2025-07-04T15:54:26.949063",
+    "version": 1
+  },
+  "calculate_statistics": {
+    "name": "calculate_statistics",
+    "code": "\ndef calculate_statistics(data: dict) -> dict:\n    \"\"\"计算数据统计信息\"\"\"\n    import pandas as pd\n    try:\n        if 'error' in data:\n            return data\n        \n        df = pd.DataFrame(data['data'])\n        numeric_cols = df.select_dtypes(include=['number']).columns\n        \n        stats = {}\n        for col in numeric_cols:\n            stats[col] = {\n                'mean': df[col].mean(),\n                'median': df[col].median(),\n                'std': df[col].std(),\n                'min': df[col].min(),\n                'max': df[col].max()\n            }\n        \n        return {'statistics': stats, 'numeric_columns': numeric_cols.tolist()}\n    except Exception as e:\n        return {'error': str(e)}\n",
+    "description": "计算数值列的统计信息",
+    "task_origin": "示例函数",
+    "test_cases": [],
+    "hash": "6d012c32885c18f38b9e3be8ef9c2b10",
+    "created_at": "2025-07-04T15:54:26.954882",
+    "updated_at": "2025-07-04T15:54:26.954882",
+    "version": 1
+  },
+  "generate_report": {
+    "name": "generate_report",
+    "code": "\ndef generate_report(stats: dict) -> str:\n    \"\"\"生成统计报告\"\"\"\n    try:\n        if 'error' in stats:\n            return f\"报告生成失败: {stats['error']}\"\n        \n        report_lines = [\"# 数据统计报告\\n\"]\n        \n        for col, col_stats in stats['statistics'].items():\n            report_lines.append(f\"## {col} 列统计\")\n            report_lines.append(f\"- 平均值: {col_stats['mean']:.2f}\")\n            report_lines.append(f\"- 中位数: {col_stats['median']:.2f}\")\n            report_lines.append(f\"- 标准差: {col_stats['std']:.2f}\")\n            report_lines.append(f\"- 最小值: {col_stats['min']:.2f}\")\n            report_lines.append(f\"- 最大值: {col_stats['max']:.2f}\")\n            report_lines.append(\"\")\n        \n        return \"\\n\".join(report_lines)\n    except Exception as e:\n        return f\"报告生成失败: {str(e)}\"\n",
+    "description": "生成格式化的统计报告",
+    "task_origin": "示例函数",
+    "test_cases": [],
+    "hash": "d268e1a502b657e900f494b0edf73a12",
+    "created_at": "2025-07-04T15:54:26.960345",
+    "updated_at": "2025-07-04T15:54:26.960345",
+    "version": 1
   }
 }

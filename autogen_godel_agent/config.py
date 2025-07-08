@@ -42,6 +42,49 @@ class Config:
     # === File Paths ===
     FUNCTION_REGISTRY_FILE = "memory/function_registry.json"
     HISTORY_FILE = "memory/history.json"
+
+    # === Learning Memory System Settings ===
+    LEARNING_MEMORY_ENABLED = os.getenv("LEARNING_MEMORY_ENABLED", "true").lower() == "true"
+
+    # Pattern Recognition Settings
+    try:
+        MIN_PATTERN_SIMILARITY = float(os.getenv("MIN_PATTERN_SIMILARITY", "0.3"))
+    except ValueError:
+        MIN_PATTERN_SIMILARITY = 0.3
+
+    try:
+        MAX_SIMILAR_PATTERNS = int(os.getenv("MAX_SIMILAR_PATTERNS", "10"))
+    except ValueError:
+        MAX_SIMILAR_PATTERNS = 10
+
+    # Knowledge Graph Settings
+    try:
+        MIN_RELATIONSHIP_STRENGTH = float(os.getenv("MIN_RELATIONSHIP_STRENGTH", "0.3"))
+    except ValueError:
+        MIN_RELATIONSHIP_STRENGTH = 0.3
+
+    try:
+        MIN_CLUSTER_SIZE = int(os.getenv("MIN_CLUSTER_SIZE", "3"))
+    except ValueError:
+        MIN_CLUSTER_SIZE = 3
+
+    # Recommendation Engine Settings
+    try:
+        MIN_RECOMMENDATION_CONFIDENCE = float(os.getenv("MIN_RECOMMENDATION_CONFIDENCE", "0.5"))
+    except ValueError:
+        MIN_RECOMMENDATION_CONFIDENCE = 0.5
+
+    try:
+        MAX_RECOMMENDATIONS = int(os.getenv("MAX_RECOMMENDATIONS", "5"))
+    except ValueError:
+        MAX_RECOMMENDATIONS = 5
+
+    # Learning Memory File Paths
+    MEMORY_DIR = "memory"
+    TASK_PATTERNS_FILE = f"{MEMORY_DIR}/task_patterns.json"
+    SOLUTION_PATTERNS_FILE = f"{MEMORY_DIR}/solution_patterns.json"
+    KNOWLEDGE_GRAPH_FILE = f"{MEMORY_DIR}/knowledge_graph.json"
+    RECOMMENDATIONS_HISTORY_FILE = f"{MEMORY_DIR}/recommendations_history.jsonl"
     
     @classmethod
     def get_llm_config(cls) -> dict:

@@ -15,8 +15,13 @@ for the Function Creator Agent system. It includes:
 
 import ast
 import logging
+import sys
+import platform
+import threading
+import queue
+import signal
 from typing import List, Tuple, Dict, Any, Optional
-from multiprocessing import Process, Queue
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -182,7 +187,10 @@ def create_safe_namespace() -> Dict[str, Any]:
 
 def execute_code_safely(code: str, timeout_seconds: int = 10) -> Tuple[bool, str, Dict[str, Any]]:
     """
-    Execute code safely with timeout and sandboxing using multiprocessing.
+    Execute code safely with timeout and sandboxing using thread pool.
+
+    Note: Using threads instead of processes to avoid Windows handle issues.
+    This provides reasonable isolation while maintaining cross-platform compatibility.
 
     Args:
         code: Python code to execute
@@ -191,8 +199,8 @@ def execute_code_safely(code: str, timeout_seconds: int = 10) -> Tuple[bool, str
     Returns:
         Tuple of (success, error_message, namespace_after_execution)
     """
-    def _execute_in_process(code: str, result_queue: Queue):
-        """Execute code in a separate process."""
+    def _execute_in_thread(code: str) -> Tuple[str, str, Dict[str, Any]]:
+        """Execute code in a separate thread with safe namespace."""
         try:
             # Create safe namespace
             namespace = create_safe_namespace()
@@ -204,55 +212,26 @@ def execute_code_safely(code: str, timeout_seconds: int = 10) -> Tuple[bool, str
             result_namespace = {k: v for k, v in namespace.items()
                               if k != '__builtins__' and not k.startswith('__')}
 
-            result_queue.put(('success', '', result_namespace))
+            return 'success', '', result_namespace
 
         except Exception as e:
             error_msg = f"{type(e).__name__}: {str(e)}"
-            result_queue.put(('error', error_msg, {}))
-
-    # Create queue for inter-process communication
-    result_queue = Queue()
-
-    # Create and start process
-    process = Process(target=_execute_in_process, args=(code, result_queue))
-    process.start()
+            return 'error', error_msg, {}
 
     try:
-        # Wait for result with timeout
-        process.join(timeout=timeout_seconds)
+        # Use ThreadPoolExecutor for timeout control (avoids Windows multiprocessing issues)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_execute_in_thread, code)
 
-        if process.is_alive():
-            # Process is still running, terminate it
-            process.terminate()
-            process.join(timeout=1)  # Give it a second to terminate gracefully
+            try:
+                status, error_msg, namespace = future.result(timeout=timeout_seconds)
+                return status == 'success', error_msg, namespace
 
-            if process.is_alive():
-                # Force kill if still alive
-                process.kill()
-                process.join()
-
-            return False, f"Code execution timeout after {timeout_seconds} seconds", {}
-
-        # Get result from queue
-        if not result_queue.empty():
-            status, error_msg, namespace = result_queue.get()
-            return status == 'success', error_msg, namespace
-        else:
-            return False, "No result returned from execution process", {}
+            except FutureTimeoutError:
+                return False, f"Code execution timeout after {timeout_seconds} seconds", {}
 
     except Exception as e:
-        # Clean up process if still running
-        if process.is_alive():
-            process.terminate()
-            process.join()
-
         return False, f"Execution error: {e}", {}
-
-    finally:
-        # Ensure process is cleaned up
-        if process.is_alive():
-            process.terminate()
-            process.join()
 
 
 def test_function_safely(func_code: str, func_name: str, test_cases: List[Dict],
