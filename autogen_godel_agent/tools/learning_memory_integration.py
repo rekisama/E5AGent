@@ -16,14 +16,68 @@ import asyncio
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 
-from ..memory.learning_memory_system import (
-    LearningMemoryManager, 
-    RecommendationResult,
-    TaskPattern
-)
-from ..config import Config
-from .function_registry import FunctionRegistry
-from .function_tools import FunctionTools
+try:
+    from autogen_godel_agent.memory.learning_memory_system import (
+        LearningMemoryManager,
+        RecommendationResult,
+        TaskPattern
+    )
+    MEMORY_SYSTEM_AVAILABLE = True
+except ImportError:
+    try:
+        from memory.learning_memory_system import (
+            LearningMemoryManager,
+            RecommendationResult,
+            TaskPattern
+        )
+        MEMORY_SYSTEM_AVAILABLE = True
+    except ImportError:
+        # Create mock classes for when memory system is not available
+        class LearningMemoryManager:
+            def __init__(self, *args, **kwargs): pass
+            def get_recommendations(self, *args, **kwargs):
+                return type('RecommendationResult', (), {
+                    'recommended_functions': [],
+                    'confidence_score': 0.0,
+                    'reasoning': 'Memory system not available',
+                    'estimated_success_rate': 0.0,
+                    'alternative_approaches': [],
+                    'similar_cases': []
+                })()
+            def process_task_completion(self, *args, **kwargs): pass
+            def get_learning_statistics(self): return {}
+
+        class RecommendationResult:
+            def __init__(self):
+                self.recommended_functions = []
+                self.confidence_score = 0.0
+                self.reasoning = 'Memory system not available'
+                self.estimated_success_rate = 0.0
+                self.alternative_approaches = []
+                self.similar_cases = []
+
+        class TaskPattern:
+            pass
+
+        MEMORY_SYSTEM_AVAILABLE = False
+
+try:
+    from autogen_godel_agent.config import Config
+except ImportError:
+    from config import Config
+
+try:
+    from .function_registry import FunctionRegistry
+    from .function_tools import FunctionTools
+except ImportError:
+    # Create mock classes
+    class FunctionRegistry:
+        def get_all_functions(self): return {}
+        def get_function_info(self, name): return None
+
+    class FunctionTools:
+        def __init__(self):
+            self.registry = FunctionRegistry()
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +87,15 @@ class LearningMemoryIntegration:
     def __init__(self, function_tools: FunctionTools, function_registry: FunctionRegistry):
         self.function_tools = function_tools
         self.function_registry = function_registry
-        self.learning_manager = LearningMemoryManager(Config.MEMORY_DIR)
-        self.enabled = Config.LEARNING_MEMORY_ENABLED
+
+        # Initialize learning manager if available
+        if MEMORY_SYSTEM_AVAILABLE:
+            memory_dir = getattr(Config, 'MEMORY_DIR', './memory')
+            self.learning_manager = LearningMemoryManager(memory_dir)
+            self.enabled = getattr(Config, 'LEARNING_MEMORY_ENABLED', True)
+        else:
+            self.learning_manager = LearningMemoryManager()
+            self.enabled = False
         
         if self.enabled:
             logger.info("🧠 Learning Memory System initialized and enabled")

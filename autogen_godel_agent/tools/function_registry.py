@@ -208,6 +208,15 @@ class FunctionRegistry:
         """
         return list(self.functions.keys())
 
+    def get_all_functions(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Get all registered functions with their data.
+
+        Returns:
+            Dictionary mapping function names to their data
+        """
+        return self.functions.copy()
+
     def get_function_info(self, func_name: str) -> Optional[Dict[str, Any]]:
         """
         Get function information (metadata without code).
