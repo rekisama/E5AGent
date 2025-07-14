@@ -1,5 +1,5 @@
 {
-  "metadata": {
+  "functions": {
     "calculate_fibonacci": {
       "name": "calculate_fibonacci",
       "code": "\ndef calculate_fibonacci(n: int) -> int:\n    \"\"\"Calculate the nth Fibonacci number using iterative approach.\"\"\"\n    if n <= 1:\n        return n\n    \n    a, b = 0, 1\n    for _ in range(2, n + 1):\n        a, b = b, a + b\n    return b\n",
@@ -50,53 +50,95 @@
       "dependencies": [],
       "usage_count": 0,
       "last_used": null
+    },
+    "test_function": {
+      "name": "test_function",
+      "code": "\ndef test_function(x: int) -> int:\n    \"\"\"Test function.\"\"\"\n    return x * 2\n",
+      "description": "Test function for parameter naming",
+      "task_origin": "test_fixes_validation",
+      "test_cases": [],
+      "code_hash": "95200e4c47a69aba5de52d63f35c5d63",
+      "created_at": "2025-07-04T15:15:51.887353",
+      "updated_at": "2025-07-04T15:15:51.887353",
+      "version": 1
+    },
+    "read_csv_file": {
+      "name": "read_csv_file",
+      "code": "\ndef read_csv_file(file_path: str) -> dict:\n    \"\"\"读取CSV文件并返回数据\"\"\"\n    import pandas as pd\n    try:\n        df = pd.read_csv(file_path)\n        return {\n            'data': df.to_dict('records'),\n            'columns': df.columns.tolist(),\n            'shape': df.shape\n        }\n    except Exception as e:\n        return {'error': str(e)}\n",
+      "description": "读取CSV文件并返回结构化数据",
+      "task_origin": "示例函数",
+      "test_cases": [],
+      "code_hash": "4a56c37b917d519fd322a25bf3cefda4",
+      "created_at": "2025-07-04T15:54:26.949063",
+      "updated_at": "2025-07-04T15:54:26.949063",
+      "version": 1
+    },
+    "calculate_statistics": {
+      "name": "calculate_statistics",
+      "code": "\ndef calculate_statistics(data: dict) -> dict:\n    \"\"\"计算数据统计信息\"\"\"\n    import pandas as pd\n    try:\n        if 'error' in data:\n            return data\n        \n        df = pd.DataFrame(data['data'])\n        numeric_cols = df.select_dtypes(include=['number']).columns\n        \n        stats = {}\n        for col in numeric_cols:\n            stats[col] = {\n                'mean': df[col].mean(),\n                'median': df[col].median(),\n                'std': df[col].std(),\n                'min': df[col].min(),\n                'max': df[col].max()\n            }\n        \n        return {'statistics': stats, 'numeric_columns': numeric_cols.tolist()}\n    except Exception as e:\n        return {'error': str(e)}\n",
+      "description": "计算数值列的统计信息",
+      "task_origin": "示例函数",
+      "test_cases": [],
+      "code_hash": "6d012c32885c18f38b9e3be8ef9c2b10",
+      "created_at": "2025-07-04T15:54:26.954882",
+      "updated_at": "2025-07-04T15:54:26.954882",
+      "version": 1
+    },
+    "generate_report": {
+      "name": "generate_report",
+      "code": "\ndef generate_report(stats: dict) -> str:\n    \"\"\"生成统计报告\"\"\"\n    try:\n        if 'error' in stats:\n            return f\"报告生成失败: {stats['error']}\"\n        \n        report_lines = [\"# 数据统计报告\\n\"]\n        \n        for col, col_stats in stats['statistics'].items():\n            report_lines.append(f\"## {col} 列统计\")\n            report_lines.append(f\"- 平均值: {col_stats['mean']:.2f}\")\n            report_lines.append(f\"- 中位数: {col_stats['median']:.2f}\")\n            report_lines.append(f\"- 标准差: {col_stats['std']:.2f}\")\n            report_lines.append(f\"- 最小值: {col_stats['min']:.2f}\")\n            report_lines.append(f\"- 最大值: {col_stats['max']:.2f}\")\n            report_lines.append(\"\")\n        \n        return \"\\n\".join(report_lines)\n    except Exception as e:\n        return f\"报告生成失败: {str(e)}\"\n",
+      "description": "生成格式化的统计报告",
+      "task_origin": "示例函数",
+      "test_cases": [],
+      "code_hash": "d268e1a502b657e900f494b0edf73a12",
+      "created_at": "2025-07-04T15:54:26.960345",
+      "updated_at": "2025-07-04T15:54:26.960345",
+      "version": 1
+    },
+    "create_a_simple_calculator_function_1752215669": {
+      "name": "create_a_simple_calculator_function_1752215669",
+      "code": "def create_a_simple_calculator_function_1752215669(num1: float, num2: float, operation: str) -> any:\n    \"\"\"\n    Performs basic arithmetic calculations (addition, subtraction, multiplication, division) \n    between two numbers with error handling for division by zero.\n\n    Parameters:\n        num1 (float): The first number for the calculation\n        num2 (float): The second number for the calculation\n        operation (str): The arithmetic operation to perform. \n                         Valid values: 'add', 'subtract', 'multiply', 'divide'\n\n    Returns:\n        any: The result of the calculation as a float, or an error message as a string \n             if division by zero occurs or invalid operation is provided\n\n    Examples:\n        >>> create_a_simple_calculator_function_1752215669(5, 3, 'add')\n        8\n        >>> create_a_simple_calculator_function_1752215669(10, 2, 'divide')\n        5.0\n        >>> create_a_simple_calculator_function_1752215669(10, 0, 'divide')\n        'Error: Division by zero'\n        >>> create_a_simple_calculator_function_1752215669(7, 4, 'subtract')\n        3\n        >>> create_a_simple_calculator_function_1752215669(6, 5, 'multiply')\n        30\n    \"\"\"\n    try:\n        operation = operation.lower()\n        if operation == 'add':\n            return num1 + num2\n        elif operation == 'subtract':\n            return num1 - num2\n        elif operation == 'multiply':\n            return num1 * num2\n        elif operation == 'divide':\n            if num2 == 0:\n                return \"Error: Division by zero\"\n            return num1 / num2\n        else:\n            return f\"Error: Invalid operation '{operation}'. Valid operations are: add, subtract, multiply, divide\"\n    except TypeError:\n        return \"Error: All arguments must be numbers (num1, num2) and operation must be a string\"",
+      "description": "Performs basic arithmetic calculations (addition, subtraction, multiplication, division) between two numbers with error handling for division by zero",
+      "task_origin": "Auto-generated for: Performs basic arithmetic calculations (addition, subtraction, multiplication, division) between two numbers with error handling for division by zero",
+      "code_hash": "95d1e004eb3faccc3433ad2b82bccc70",
+      "created_at": "2025-07-11T14:37:05.772595",
+      "updated_at": "2025-07-11T14:37:05.772595",
+      "version": 1
+    },
+    "create_a_string_reversal_function_1752217320": {
+      "name": "create_a_string_reversal_function_1752217320",
+      "code": "def create_a_string_reversal_function_1752217320(input_string: str) -> any:\n    \"\"\"\n    Reverses the characters in a given input string while preserving Unicode characters.\n    Handles empty strings and maintains the original character encoding.\n\n    Parameters:\n        input_string (str): The string to be reversed. Can contain Unicode characters.\n\n    Returns:\n        any: The reversed string. Return type is 'any' to satisfy specific requirements,\n             but will always return a string (including empty string for empty input).\n\n    Examples:\n        >>> create_a_string_reversal_function_1752217320(\"hello\")\n        'olleh'\n        >>> create_a_string_reversal_function_1752217320(\"Python\")\n        'nohtyP'\n        >>> create_a_string_reversal_function_1752217320(\"你好\")\n        '好你'\n        >>> create_a_string_reversal_function_1752217320(\"\")\n        ''\n    \"\"\"\n    try:\n        # Handle None input by converting to empty string\n        if input_string is None:\n            return \"\"\n\n        # The simplest way to reverse Unicode strings correctly in Python\n        return input_string[::-1]\n\n    except Exception as e:\n        # In case of any unexpected errors (though string slicing is very safe)\n        # Return empty string as fallback\n        return \"\"",
+      "description": "Takes an input string and returns a new string with characters in reverse order. Preserves Unicode characters and handles empty strings.",
+      "task_origin": "Auto-generated for: Takes an input string and returns a new string with characters in reverse order. Preserves Unicode characters and handles empty strings.",
+      "code_hash": "0d5fa746b9e5794bdd40c69355c7719c",
+      "created_at": "2025-07-11T15:03:56.743471",
+      "updated_at": "2025-07-11T15:03:56.743471",
+      "version": 1
+    },
+    "create_a_password_strength_checker_function_1752217961": {
+      "name": "create_a_password_strength_checker_function_1752217961",
+      "code": "import re\nimport math\nfrom typing import Dict, List, Any\n\ndef create_a_password_strength_checker_function_1752217961(password: str) -> Dict[str, Any]:\n    \"\"\"\n    Evaluates password strength based on multiple criteria and provides improvement suggestions.\n\n    The function checks:\n    - Length (minimum 12 characters recommended)\n    - Presence of uppercase, lowercase, numbers, and special characters\n    - Character diversity and entropy\n    - Common patterns and dictionary words\n    - Sequential or repeated characters\n\n    Parameters:\n        password (str): The password string to evaluate\n\n    Returns:\n        Dict[str, Any]: A dictionary containing:\n            - 'score' (int): Strength score from 1 (weak) to 5 (strong)\n            - 'feedback' (List[str]): List of improvement suggestions\n            - 'entropy' (float): Calculated entropy bits\n            - 'length' (int): Password length\n\n    Examples:\n        >>> create_a_password_strength_checker_function_1752217961('weakpass')\n        {'score': 1, 'feedback': ['Too short (minimum 12 characters recommended)', ...], ...}\n\n        >>> create_a_password_strength_checker_function_1752217961('S7r0ngP@$$w0rd!')\n        {'score': 4, 'feedback': ['Good length', ...], ...}\n    \"\"\"\n    if not isinstance(password, str):\n        return {\n            'score': 0,\n            'feedback': ['Invalid input: password must be a string'],\n            'entropy': 0.0,\n            'length': 0\n        }\n\n    feedback = []\n    score = 0\n    length = len(password)\n\n    # Common weak passwords and patterns to check against\n    common_passwords = {\n        'password', '123456', 'qwerty', 'letmein', 'welcome',\n        'admin', 'password1', '12345678', '123456789', '123123'\n    }\n    common_patterns = [\n        r'(\\w)\\1{2,}',  # Repeated characters\n        r'123\\d*',      # Sequential numbers\n        r'qwerty\\d*',   # Keyboard patterns\n        r'abc\\d*',      # Alphabet sequences\n    ]\n\n    # Character type checks\n    has_lower = any(c.islower() for c in password)\n    has_upper = any(c.isupper() for c in password)\n    has_digit = any(c.isdigit() for c in password)\n    has_special = any(not c.isalnum() for c in password)\n\n    # Calculate character diversity\n    unique_chars = len(set(password))\n    diversity = unique_chars / length if length > 0 else 0\n\n    # Calculate entropy\n    char_pool = 0\n    if has_lower:\n        char_pool += 26\n    if has_upper:\n        char_pool += 26\n    if has_digit:\n        char_pool += 10\n    if has_special:\n        char_pool += 32  # Approximate common special chars\n\n    entropy = length * math.log2(char_pool) if char_pool > 0 else 0\n\n    # Length check\n    if length < 8:\n        feedback.append(\"Very short (minimum 12 characters recommended)\")\n    elif length < 12:\n        feedback.append(\"Too short (minimum 12 characters recommended)\")\n    else:\n        feedback.append(\"Good length\")\n        score += 1\n\n    # Character diversity checks\n    if not has_lower:\n        feedback.append(\"Missing lowercase letters\")\n    else:\n        score += 0.5\n\n    if not has_upper:\n        feedback.append(\"Missing uppercase letters\")\n    else:\n        score += 0.5\n\n    if not has_digit:\n        feedback.append(\"Missing numbers\")\n    else:\n        score += 0.5\n\n    if not has_special:\n        feedback.append(\"Missing special characters\")\n    else:\n        score += 0.5\n\n    # Diversity check\n    if diversity < 0.5:\n        feedback.append(f\"Low character diversity ({diversity:.1%} unique characters)\")\n    else:\n        score += 0.5\n\n    # Entropy check\n    if entropy < 40:\n        feedback.append(f\"Low entropy ({entropy:.1f} bits)\")\n    elif entropy < 60:\n        feedback.append(f\"Moderate entropy ({entropy:.1f} bits)\")\n        score += 1\n    else:\n        feedback.append(f\"High entropy ({entropy:.1f} bits)\")\n        score += 1.5\n\n    # Common password checks\n    if password.lower() in common_passwords:\n        feedback.append(\"Common dictionary password\")\n        score = max(1, score - 1)\n\n    for pattern in common_patterns:\n        if re.search(pattern, password, re.IGNORECASE):\n            feedback.append(\"Contains common pattern\")\n            score = max(1, score - 0.5)\n            break\n\n    # Final score adjustment (1-5 scale)\n    score = min(5, max(1, round(score)))\n\n    return {\n        'score': score,\n        'feedback': feedback,\n        'entropy': round(entropy, 2),\n        'length': length\n    }",
+      "description": "Comprehensively evaluates password strength based on multiple criteria including length, character diversity, entropy, and common password patterns. Returns a score and detailed improvement suggestions.",
+      "task_origin": "Auto-generated for: Comprehensively evaluates password strength based on multiple criteria including length, character diversity, entropy, and common password patterns. Returns a score and detailed improvement suggestions.",
+      "code_hash": "668c452c6700de661d07ee0fe6653b3e",
+      "created_at": "2025-07-11T15:14:51.114386",
+      "updated_at": "2025-07-11T15:14:51.114386",
+      "version": 1
+    },
+    "create_a_url_validator_function_1752219812": {
+      "name": "create_a_url_validator_function_1752219812",
+      "code": "import re\nfrom typing import Any\n\ndef create_a_url_validator_function_1752219812(url: str, require_https: bool = False) -> Any:\n    \"\"\"\n    Validates whether a string is a properly formatted URL according to standard conventions.\n\n    Checks URL structure including:\n    - Scheme (http/https)\n    - Valid domain name\n    - Optional path and query parameters\n    - Can enforce HTTPS requirement\n\n    Args:\n        url (str): The URL string to validate\n        require_https (bool): If True, only accepts HTTPS URLs. Defaults to False.\n\n    Returns:\n        Any: Returns True if URL is valid, False otherwise. Type is Any to match specification.\n\n    Examples:\n        >>> create_a_url_validator_function_1752219812('https://example.com', False)\n        True\n        >>> create_a_url_validator_function_1752219812('http://test.org/path?query=1', True)\n        False\n        >>> create_a_url_validator_function_1752219812('invalid.url', False)\n        False\n    \"\"\"\n    try:\n        # Basic pattern for URL validation\n        pattern = (\n            r'^(?:(?P<scheme>http[s]?)://)?'  # http:// or https://\n            r'(?P<domain>'  # domain part\n            r'(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\\.)+'  # subdomains\n            r'[A-Z]{2,6}\\.?|'  # top level domain\n            r'localhost|'  # localhost\n            r'\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3})'  # or ip address\n            r'(?::\\d+)?'  # optional port\n            r'(?:/?|[/?]\\S+)$'  # optional path/query\n        )\n\n        # Compile regex with case insensitive flag\n        regex = re.compile(pattern, re.IGNORECASE)\n\n        # Check if URL matches pattern\n        if not regex.search(url):\n            return False\n\n        # If HTTPS is required, check scheme\n        if require_https:\n            if not url.startswith('https://'):\n                return False\n\n        return True\n\n    except (TypeError, AttributeError):\n        # Handle case where input is not a string\n        return False",
+      "description": "Checks if a string is a properly formatted URL according to standard conventions. Validates the URL structure including scheme (http/https), domain name, and optional path/query parameters. Returns True if valid, False otherwise.",
+      "task_origin": "Auto-generated for: Checks if a string is a properly formatted URL according to standard conventions. Validates the URL structure including scheme (http/https), domain name, and optional path/query parameters. Returns True if valid, False otherwise.",
+      "code_hash": "6dfb426101205189a96e0b7595d10a80",
+      "created_at": "2025-07-11T15:46:55.469980",
+      "updated_at": "2025-07-11T15:46:55.469980",
+      "version": 1
     }
   },
-  "last_updated": "2025-07-03T18:46:10.398855",
-  "version": "2.0",
-  "total_functions": 2,
-  "test_function": {
-    "name": "test_function",
-    "code": "\ndef test_function(x: int) -> int:\n    \"\"\"Test function.\"\"\"\n    return x * 2\n",
-    "description": "Test function for parameter naming",
-    "task_origin": "test_fixes_validation",
-    "test_cases": [],
-    "hash": "95200e4c47a69aba5de52d63f35c5d63",
-    "created_at": "2025-07-04T15:15:51.887353",
-    "updated_at": "2025-07-04T15:15:51.887353",
-    "version": 1
-  },
-  "read_csv_file": {
-    "name": "read_csv_file",
-    "code": "\ndef read_csv_file(file_path: str) -> dict:\n    \"\"\"读取CSV文件并返回数据\"\"\"\n    import pandas as pd\n    try:\n        df = pd.read_csv(file_path)\n        return {\n            'data': df.to_dict('records'),\n            'columns': df.columns.tolist(),\n            'shape': df.shape\n        }\n    except Exception as e:\n        return {'error': str(e)}\n",
-    "description": "读取CSV文件并返回结构化数据",
-    "task_origin": "示例函数",
-    "test_cases": [],
-    "hash": "4a56c37b917d519fd322a25bf3cefda4",
-    "created_at": "2025-07-04T15:54:26.949063",
-    "updated_at": "2025-07-04T15:54:26.949063",
-    "version": 1
-  },
-  "calculate_statistics": {
-    "name": "calculate_statistics",
-    "code": "\ndef calculate_statistics(data: dict) -> dict:\n    \"\"\"计算数据统计信息\"\"\"\n    import pandas as pd\n    try:\n        if 'error' in data:\n            return data\n        \n        df = pd.DataFrame(data['data'])\n        numeric_cols = df.select_dtypes(include=['number']).columns\n        \n        stats = {}\n        for col in numeric_cols:\n            stats[col] = {\n                'mean': df[col].mean(),\n                'median': df[col].median(),\n                'std': df[col].std(),\n                'min': df[col].min(),\n                'max': df[col].max()\n            }\n        \n        return {'statistics': stats, 'numeric_columns': numeric_cols.tolist()}\n    except Exception as e:\n        return {'error': str(e)}\n",
-    "description": "计算数值列的统计信息",
-    "task_origin": "示例函数",
-    "test_cases": [],
-    "hash": "6d012c32885c18f38b9e3be8ef9c2b10",
-    "created_at": "2025-07-04T15:54:26.954882",
-    "updated_at": "2025-07-04T15:54:26.954882",
-    "version": 1
-  },
-  "generate_report": {
-    "name": "generate_report",
-    "code": "\ndef generate_report(stats: dict) -> str:\n    \"\"\"生成统计报告\"\"\"\n    try:\n        if 'error' in stats:\n            return f\"报告生成失败: {stats['error']}\"\n        \n        report_lines = [\"# 数据统计报告\\n\"]\n        \n        for col, col_stats in stats['statistics'].items():\n            report_lines.append(f\"## {col} 列统计\")\n            report_lines.append(f\"- 平均值: {col_stats['mean']:.2f}\")\n            report_lines.append(f\"- 中位数: {col_stats['median']:.2f}\")\n            report_lines.append(f\"- 标准差: {col_stats['std']:.2f}\")\n            report_lines.append(f\"- 最小值: {col_stats['min']:.2f}\")\n            report_lines.append(f\"- 最大值: {col_stats['max']:.2f}\")\n            report_lines.append(\"\")\n        \n        return \"\\n\".join(report_lines)\n    except Exception as e:\n        return f\"报告生成失败: {str(e)}\"\n",
-    "description": "生成格式化的统计报告",
-    "task_origin": "示例函数",
-    "test_cases": [],
-    "hash": "d268e1a502b657e900f494b0edf73a12",
-    "created_at": "2025-07-04T15:54:26.960345",
-    "updated_at": "2025-07-04T15:54:26.960345",
-    "version": 1
+  "metadata": {
+    "last_updated": "2025-07-11T15:46:55.474982",
+    "version": "2.0",
+    "total_functions": 10
   }
 }

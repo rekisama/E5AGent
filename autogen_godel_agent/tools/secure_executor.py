@@ -265,6 +265,12 @@ def test_function_safely(func_code: str, func_name: str, test_cases: List[Dict],
                 # Convert dict input to function call
                 args_str = ', '.join(f"{k}={repr(v)}" for k, v in test_input.items())
                 test_code = f"""
+# Import required modules
+import re
+import sys
+import os
+from typing import Any
+
 {func_code}
 
 # Test execution
@@ -280,6 +286,12 @@ except Exception as e:
             else:
                 # Handle other input formats
                 test_code = f"""
+# Import required modules
+import re
+import sys
+import os
+from typing import Any
+
 {func_code}
 
 # Test execution

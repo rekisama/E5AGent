@@ -18,7 +18,27 @@ from typing import Dict, List, Any, Optional
 from config import Config
 from agents.planner_agent import TaskPlannerAgent
 from agents.function_creator_agent import FunctionCreatorAgent
+from agents.multi_file_agent import get_multi_file_agent
+from workflow.evo_workflow_manager import get_evo_workflow_manager
 from tools.function_tools import get_function_tools
+try:
+    from tools.workflow_visualizer import get_workflow_visualizer, get_workflow_dashboard, visualize_workflow_mermaid
+    ADVANCED_VISUALIZER_AVAILABLE = True
+except ImportError:
+    from tools.simple_visualizer import (
+        generate_mermaid_from_description,
+        generate_ascii_from_description,
+        determine_workflow_type,
+        export_visualization
+    )
+    ADVANCED_VISUALIZER_AVAILABLE = False
+
+# Import GUI visualizer
+try:
+    from tools.gui_visualizer import show_workflow_popup, get_gui_visualizer
+    GUI_VISUALIZER_AVAILABLE = True
+except ImportError:
+    GUI_VISUALIZER_AVAILABLE = False
 # Try to import learning memory integration
 try:
     from tools.learning_memory_integration import LearningMemoryIntegration
@@ -51,6 +71,17 @@ class SelfExpandingAgentSystem:
         self.function_tools = get_function_tools()
         self.planner_agent = TaskPlannerAgent(self.llm_config)
         self.creator_agent = FunctionCreatorAgent(self.llm_config)
+        self.multi_file_agent = get_multi_file_agent(self.llm_config)
+        self.evo_workflow_manager = get_evo_workflow_manager(self.llm_config)
+
+        # Initialize visualization components
+        if ADVANCED_VISUALIZER_AVAILABLE:
+            self.workflow_visualizer = get_workflow_visualizer()
+            self.workflow_dashboard = get_workflow_dashboard()
+        else:
+            self.workflow_visualizer = None
+            self.workflow_dashboard = None
+            logger.info("⚠️ Using simplified visualizer (advanced features unavailable)")
 
         # Initialize learning memory system if available
         if LEARNING_MEMORY_AVAILABLE:
@@ -75,7 +106,7 @@ class SelfExpandingAgentSystem:
 
         # Create group chat for complex coordination
         self.group_chat = autogen.GroupChat(
-            agents=[self.user_proxy, self.planner_agent.agent, self.creator_agent.agent],
+            agents=[self.user_proxy, self.planner_agent.agent, self.creator_agent.agent, self.multi_file_agent.agent],
             messages=[],
             max_round=20,
             speaker_selection_method="round_robin",
@@ -126,38 +157,46 @@ class SelfExpandingAgentSystem:
         start_time = datetime.now()
 
         try:
-            # 1. Enhanced task analysis with learning memory (if available)
-            if self.learning_integration:
-                enhancement = self.learning_integration.enhance_task_analysis(task_description)
-
-                # 2. Intelligent decision making based on learning insights
-                if enhancement.get('enhanced', False):
-                    recommendations = enhancement.get('recommendations', {})
-                    confidence = recommendations.get('confidence', 0.0)
-
-                    if confidence > getattr(Config, 'MIN_RECOMMENDATION_CONFIDENCE', 0.5):
-                        logger.info(f"🧠 Using learning recommendations (confidence: {confidence:.2f})")
-                        result = self._execute_with_recommendations(task_description, enhancement)
-                    else:
-                        logger.info("🔧 Creating new function (low confidence in recommendations)")
-                        result = self._create_and_execute_function(task_description)
-                else:
-                    logger.info("🔄 Using standard analysis workflow")
-                    result = self._process_task_standard(task_description)
-
-                # 3. Record execution for learning
-                execution_time = (datetime.now() - start_time).total_seconds()
-                self.learning_integration.record_task_execution(
-                    task_description=task_description,
-                    functions_used=result.get('functions_used', []),
-                    success=result.get('success', False),
-                    execution_time=execution_time,
-                    additional_context={'session_id': session_id}
-                )
+            # 1. Intelligent task routing - determine the best approach
+            if self._needs_evo_workflow_sync(task_description):
+                logger.info("🌟 Task requires EvoAgentX-style workflow")
+                result = self._process_evo_workflow_task_sync(task_description)
+            elif self._needs_multi_file_generation_sync(task_description):
+                logger.info("🏗️ Task requires multi-file generation")
+                result = self._process_multi_file_task_sync(task_description)
             else:
-                # Fallback to standard processing without learning memory
-                logger.info("🔄 Using standard workflow (learning memory not available)")
-                result = self._process_task_standard(task_description)
+                # 2. Enhanced task analysis with learning memory (if available)
+                if self.learning_integration:
+                    enhancement = self.learning_integration.enhance_task_analysis(task_description)
+
+                    # 3. Intelligent decision making based on learning insights
+                    if enhancement.get('enhanced', False):
+                        recommendations = enhancement.get('recommendations', {})
+                        confidence = recommendations.get('confidence', 0.0)
+
+                        if confidence > getattr(Config, 'MIN_RECOMMENDATION_CONFIDENCE', 0.5):
+                            logger.info(f"🧠 Using learning recommendations (confidence: {confidence:.2f})")
+                            result = self._execute_with_recommendations(task_description, enhancement)
+                        else:
+                            logger.info("🔧 Creating new function (low confidence in recommendations)")
+                            result = self._create_and_execute_function(task_description)
+                    else:
+                        logger.info("🔄 Using standard analysis workflow")
+                        result = self._process_task_standard(task_description)
+
+                    # 4. Record execution for learning
+                    execution_time = (datetime.now() - start_time).total_seconds()
+                    self.learning_integration.record_task_execution(
+                        task_description=task_description,
+                        functions_used=result.get('functions_used', []),
+                        success=result.get('success', False),
+                        execution_time=execution_time,
+                        additional_context={'session_id': session_id}
+                    )
+                else:
+                    # Fallback to standard processing without learning memory
+                    logger.info("🔄 Using standard workflow (learning memory not available)")
+                    result = self._process_task_standard(task_description)
 
             # 4. Update history
             task_record = {
@@ -208,8 +247,9 @@ class SelfExpandingAgentSystem:
             if not func_info:
                 return {'success': False, 'error': f'Function {function_name} not found'}
 
-            # Execute function (simplified - in practice would need parameter mapping)
-            result = self.function_tools.execute_function(function_name, task_description)
+            # For now, return function info since direct execution needs parameter mapping
+            # TODO: Implement proper parameter mapping and function execution
+            result = f"Found function '{function_name}': {func_info.get('description', 'No description')}"
 
             return {
                 'success': True,
@@ -365,8 +405,9 @@ class SelfExpandingAgentSystem:
         # Use analysis if available
         if analysis and 'suggested_function_spec' in analysis:
             spec = analysis['suggested_function_spec']
-            spec['name'] = func_name  # Ensure unique name
-            return spec
+            if spec is not None:  # Check if spec is not None
+                spec['name'] = func_name  # Ensure unique name
+                return spec
 
         # Default specification
         return {
@@ -405,12 +446,26 @@ class SelfExpandingAgentSystem:
         try:
             # Get function names and their info
             function_names = self.function_tools.list_functions()
+
+            # Ensure function_names is a list
+            if isinstance(function_names, str):
+                logger.warning(f"list_functions returned string instead of list: {function_names}")
+                return []
+
+            if not isinstance(function_names, list):
+                logger.warning(f"list_functions returned unexpected type: {type(function_names)}")
+                return []
+
             functions_info = []
 
             for func_name in function_names:
-                func_info = self.function_tools.registry.get_function_info(func_name)
-                if func_info:
-                    functions_info.append(func_info)
+                try:
+                    func_info = self.function_tools.registry.get_function_info(func_name)
+                    if func_info:
+                        functions_info.append(func_info)
+                except Exception as e:
+                    logger.warning(f"Could not get info for function {func_name}: {e}")
+                    continue
 
             return functions_info
         except Exception as e:
@@ -420,7 +475,7 @@ class SelfExpandingAgentSystem:
     def get_system_stats(self) -> Dict[str, Any]:
         """Get system statistics."""
         functions = self.list_available_functions()
-        
+
         return {
             'total_functions': len(functions),
             'total_tasks_processed': len(self.history),
@@ -428,6 +483,151 @@ class SelfExpandingAgentSystem:
             'failed_tasks': len([h for h in self.history if h.get('status') == 'failed']),
             'functions_by_date': self._group_functions_by_date(functions)
         }
+
+    def visualize_workflow(self, task_description: str, format: str = "mermaid",
+                          export_path: str = None, show_popup: bool = False) -> Dict[str, Any]:
+        """
+        Generate and optionally export workflow visualization.
+
+        Args:
+            task_description: Description of the task to visualize
+            format: Visualization format (mermaid, ascii, json, html)
+            export_path: Optional path to export the visualization
+            show_popup: Whether to show GUI popup window
+
+        Returns:
+            Dictionary containing visualization result
+        """
+        try:
+            logger.info(f"🎨 Generating workflow visualization for: {task_description}")
+
+            # Determine workflow type
+            if not ADVANCED_VISUALIZER_AVAILABLE:
+                from tools.simple_visualizer import determine_workflow_type
+                workflow_type = determine_workflow_type(task_description)
+            else:
+                workflow_type = "evo" if self._needs_evo_workflow_sync(task_description) else "standard"
+
+            # Show GUI popup if requested
+            if show_popup and GUI_VISUALIZER_AVAILABLE:
+                success = show_workflow_popup(task_description, workflow_type)
+                if success:
+                    return {
+                        'success': True,
+                        'visualization': "GUI popup window opened",
+                        'format': 'gui_popup',
+                        'workflow_type': workflow_type,
+                        'popup_shown': True
+                    }
+                else:
+                    logger.warning("Failed to show GUI popup, falling back to text visualization")
+
+            # Generate workflow without executing
+            workflow_result = None
+
+            if self._needs_evo_workflow_sync(task_description):
+                # Generate EvoWorkflow
+                import asyncio
+                workflow_result = asyncio.run(
+                    self.evo_workflow_manager.generate_workflow_only(task_description)
+                )
+
+                if workflow_result.get("success"):
+                    # Create a mock workflow object for visualization
+                    from workflow.evo_core_algorithms import EvoWorkflowGraph, EvoWorkflowNode
+
+                    workflow = EvoWorkflowGraph(goal=task_description)
+
+                    # Add nodes from the result
+                    for node_detail in workflow_result.get("node_details", []):
+                        node = EvoWorkflowNode(
+                            name=node_detail["name"],
+                            description=node_detail["description"],
+                            reason=f"Required for {task_description}"
+                        )
+                        workflow.add_node(node)
+
+                    # Generate visualization
+                    if format.lower() == "mermaid":
+                        visualization = visualize_workflow_mermaid(workflow, include_details=True)
+                    elif format.lower() == "ascii":
+                        from tools.workflow_visualizer import visualize_workflow_ascii
+                        visualization = visualize_workflow_ascii(workflow)
+                    else:
+                        from tools.workflow_visualizer import VisualizationFormat, VisualizationOptions
+                        viz_format = VisualizationFormat(format.lower())
+                        options = VisualizationOptions(format=viz_format, include_details=True)
+                        visualization = self.workflow_visualizer.visualize_workflow(workflow, options)
+
+                    # Export if requested
+                    if export_path:
+                        with open(export_path, 'w', encoding='utf-8') as f:
+                            f.write(visualization)
+                        logger.info(f"✅ Visualization exported to: {export_path}")
+
+                    return {
+                        'success': True,
+                        'visualization': visualization,
+                        'format': format,
+                        'workflow_type': 'evo_workflow',
+                        'node_count': len(workflow.nodes),
+                        'exported_to': export_path
+                    }
+                else:
+                    return {
+                        'success': False,
+                        'error': f"Failed to generate workflow: {workflow_result.get('error')}"
+                    }
+
+            else:
+                # For simpler tasks, use the simple visualizer
+                if format.lower() == "mermaid":
+                    from tools.simple_visualizer import generate_mermaid_from_description
+                    visualization = generate_mermaid_from_description(task_description, workflow_type)
+                elif format.lower() == "ascii":
+                    from tools.simple_visualizer import generate_ascii_from_description
+                    visualization = generate_ascii_from_description(task_description, workflow_type)
+                else:
+                    # Fallback to basic text
+                    visualization = f"""
+# Task Visualization: {task_description}
+
+## Approach: Standard Processing
+1. 📋 Task Analysis (Planner Agent)
+2. 🔍 Function Search (Function Registry)
+3. 🔧 Function Creation (if needed)
+4. ✅ Execution & Validation
+5. 📝 Result Recording
+
+## Processing Flow:
+```
+Task Input → Analysis → Search Functions → [Create New Function] → Execute → Result
+```
+
+Format: {format.upper()}
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    """
+
+                if export_path:
+                    with open(export_path, 'w', encoding='utf-8') as f:
+                        f.write(visualization)
+                    logger.info(f"✅ Basic visualization exported to: {export_path}")
+
+                return {
+                    'success': True,
+                    'visualization': visualization,
+                    'format': format,
+                    'workflow_type': 'standard_processing',
+                    'exported_to': export_path
+                }
+
+        except Exception as e:
+            error_msg = f"Workflow visualization failed: {str(e)}"
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg
+            }
     
     def _group_functions_by_date(self, functions: List[Dict]) -> Dict[str, int]:
         """Group functions by creation date."""
@@ -445,6 +645,12 @@ def main():
     parser = argparse.ArgumentParser(description="AutoGen Self-Expanding Agent System with Learning Memory")
     parser.add_argument("--task", type=str, help="Task to process")
     parser.add_argument("--session-id", type=str, help="Session ID for context preservation")
+    parser.add_argument("--visualize", action="store_true", help="Generate workflow visualization")
+    parser.add_argument("--viz-format", choices=["mermaid", "ascii", "json"], default="mermaid",
+                       help="Visualization format")
+    parser.add_argument("--export-viz", type=str, help="Export visualization to file")
+    parser.add_argument("--popup", action="store_true", help="Show visualization in GUI popup window")
+    parser.add_argument("--dashboard", type=str, help="Export workflow dashboard to HTML file")
     args = parser.parse_args()
 
     print(f"🚀 AutoGen Self-Expanding Agent System with Learning Memory")
@@ -461,23 +667,53 @@ def main():
         print(f"  Tasks Processed: {stats['total_tasks_processed']}")
         print(f"  Success Rate: {stats['successful_tasks']}/{stats['total_tasks_processed']}")
 
-        # Process task
+        # Process task or generate visualization
         task = args.task or "Create an email validator function"
-        print(f"\n🎯 Processing Task: {task}")
 
-        result = system.process_task(task, args.session_id)
+        if args.visualize:
+            print(f"\n🎨 Generating Workflow Visualization: {task}")
+            viz_result = system.visualize_workflow(task, args.viz_format, args.export_viz, args.popup)
 
-        # Display results
-        if result.get('success'):
-            print(f"\n✅ Task Completed Successfully!")
-            if 'functions_used' in result:
-                print(f"  Functions Used: {', '.join(result['functions_used'])}")
-            if 'execution_type' in result:
-                print(f"  Execution Type: {result['execution_type']}")
-            if 'function_created' in result:
-                print(f"  New Function Created: {result['function_created']}")
+            if viz_result.get('success'):
+                print(f"\n✅ Visualization Generated Successfully!")
+                print(f"  Format: {viz_result['format']}")
+                print(f"  Workflow Type: {viz_result['workflow_type']}")
+                if viz_result.get('node_count'):
+                    print(f"  Nodes: {viz_result['node_count']}")
+                if viz_result.get('exported_to'):
+                    print(f"  Exported to: {viz_result['exported_to']}")
+
+                # Display visualization if it's text-based
+                if args.viz_format in ['ascii', 'mermaid'] and not args.export_viz:
+                    print(f"\n📊 {args.viz_format.upper()} Visualization:")
+                    print("-" * 60)
+                    print(viz_result['visualization'])
+            else:
+                print(f"\n❌ Visualization Failed: {viz_result.get('error', 'Unknown error')}")
+
         else:
-            print(f"\n❌ Task Failed: {result.get('error', 'Unknown error')}")
+            print(f"\n🎯 Processing Task: {task}")
+            result = system.process_task(task, args.session_id)
+
+            # Display results
+            if result.get('success'):
+                print(f"\n✅ Task Completed Successfully!")
+                if 'functions_used' in result:
+                    print(f"  Functions Used: {', '.join(result['functions_used'])}")
+                if 'execution_type' in result:
+                    print(f"  Execution Type: {result['execution_type']}")
+                if 'function_created' in result:
+                    print(f"  New Function Created: {result['function_created']}")
+            else:
+                print(f"\n❌ Task Failed: {result.get('error', 'Unknown error')}")
+
+        # Export dashboard if requested
+        if args.dashboard:
+            print(f"\n📊 Exporting Workflow Dashboard...")
+            if system.workflow_dashboard.export_dashboard(args.dashboard):
+                print(f"✅ Dashboard exported to: {args.dashboard}")
+            else:
+                print(f"❌ Failed to export dashboard to: {args.dashboard}")
 
         # Show updated stats
         stats = system.get_system_stats()
@@ -491,6 +727,171 @@ def main():
         return 1
 
     return 0
+
+
+# Add multi-file generation methods to SelfExpandingAgentSystem class
+def _add_multi_file_methods():
+    """Add multi-file generation methods to the main class."""
+
+    def _needs_multi_file_generation_sync(self, task_description: str) -> bool:
+        """
+        Determine if a task requires multi-file generation.
+
+        Args:
+            task_description: Description of the task
+
+        Returns:
+            True if multi-file generation is needed
+        """
+        # Keywords that indicate multi-file projects
+        multi_file_keywords = [
+            'website', 'webpage', 'web page', 'html', 'css', 'javascript',
+            'api', 'rest api', 'web service', 'backend', 'frontend',
+            'project', 'application', 'app', 'dashboard', 'portfolio',
+            'blog', 'documentation', 'docs', 'guide', 'manual',
+            'automation script', 'workflow', 'pipeline',
+            'data analysis', 'jupyter', 'notebook'
+        ]
+
+        task_lower = task_description.lower()
+
+        # Check for explicit multi-file indicators
+        for keyword in multi_file_keywords:
+            if keyword in task_lower:
+                return True
+
+        # Check for phrases that suggest complexity
+        complex_phrases = [
+            'create a', 'build a', 'develop a', 'generate a',
+            'make a', 'design a', 'set up a'
+        ]
+
+        for phrase in complex_phrases:
+            if phrase in task_lower and any(kw in task_lower for kw in multi_file_keywords):
+                return True
+
+        return False
+
+    def _process_multi_file_task_sync(self, task_description: str) -> Dict[str, Any]:
+        """
+        Process a task that requires multi-file generation.
+
+        Args:
+            task_description: Description of the task
+
+        Returns:
+            Dictionary containing the result
+        """
+        try:
+            logger.info("🚀 Processing multi-file generation task")
+
+            # Generate the multi-file project (using asyncio.run for sync context)
+            import asyncio
+            result = asyncio.run(self.multi_file_agent.generate_multi_file_project(task_description))
+
+            if result['success']:
+                return {
+                    'success': True,
+                    'result': result['instructions'],
+                    'project_path': result['project_path'],
+                    'generated_files': result['generated_files'],
+                    'execution_type': 'multi_file_generation',
+                    'metadata': result['metadata']
+                }
+            else:
+                # Fallback to standard processing if multi-file generation fails
+                logger.warning("Multi-file generation failed, falling back to standard processing")
+                return self._process_task_standard(task_description)
+
+        except Exception as e:
+            logger.error(f"Multi-file task processing failed: {e}")
+            # Fallback to standard processing
+            return self._process_task_standard(task_description)
+
+    def _needs_evo_workflow_sync(self, task_description: str) -> bool:
+        """
+        Determine if a task requires EvoAgentX-style workflow.
+
+        Args:
+            task_description: Description of the task
+
+        Returns:
+            True if EvoAgentX workflow is needed
+        """
+        # Keywords that indicate complex multi-agent workflows
+        evo_workflow_keywords = [
+            'workflow', 'multi-step', 'complex', 'comprehensive', 'system',
+            'framework', 'architecture', 'multi-agent', 'coordinate', 'manage',
+            'analyze and create', 'process and validate', 'research and report',
+            'plan and execute', 'design and implement', 'optimize and improve'
+        ]
+
+        task_lower = task_description.lower()
+
+        # Check for explicit workflow indicators
+        for keyword in evo_workflow_keywords:
+            if keyword in task_lower:
+                return True
+
+        # Check for complex task patterns
+        complex_patterns = [
+            'analyze', 'create', 'validate',  # Multiple verbs suggest workflow
+            'step by step', 'multiple stages', 'comprehensive solution',
+            'end-to-end', 'full process', 'complete system'
+        ]
+
+        pattern_count = sum(1 for pattern in complex_patterns if pattern in task_lower)
+
+        # If multiple patterns detected, likely needs workflow
+        return pattern_count >= 2
+
+    def _process_evo_workflow_task_sync(self, task_description: str) -> Dict[str, Any]:
+        """
+        Process a task using EvoAgentX-style workflow.
+
+        Args:
+            task_description: Description of the task
+
+        Returns:
+            Dictionary containing the result
+        """
+        try:
+            logger.info("🌟 Processing EvoAgentX-style workflow task")
+
+            # Use asyncio.run for sync context
+            import asyncio
+            result = asyncio.run(
+                self.evo_workflow_manager.create_and_execute_workflow(task_description)
+            )
+
+            if result['success']:
+                return {
+                    'success': True,
+                    'result': result['output'],
+                    'workflow_id': result['workflow_id'],
+                    'workflow_type': result['workflow_type'],
+                    'execution_time': result['execution_time'],
+                    'execution_type': 'evo_workflow',
+                    'metadata': result['metadata']
+                }
+            else:
+                # Fallback to standard processing if workflow fails
+                logger.warning("EvoAgentX workflow failed, falling back to standard processing")
+                return self._process_task_standard(task_description)
+
+        except Exception as e:
+            logger.error(f"EvoAgentX workflow processing failed: {e}")
+            # Fallback to standard processing
+            return self._process_task_standard(task_description)
+
+    # Add methods to the class
+    SelfExpandingAgentSystem._needs_multi_file_generation_sync = _needs_multi_file_generation_sync
+    SelfExpandingAgentSystem._process_multi_file_task_sync = _process_multi_file_task_sync
+    SelfExpandingAgentSystem._needs_evo_workflow_sync = _needs_evo_workflow_sync
+    SelfExpandingAgentSystem._process_evo_workflow_task_sync = _process_evo_workflow_task_sync
+
+# Apply the methods
+_add_multi_file_methods()
 
 
 if __name__ == "__main__":

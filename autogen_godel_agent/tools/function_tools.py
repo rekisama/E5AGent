@@ -19,12 +19,14 @@ from dataclasses import dataclass
 
 # Import modular components
 from .secure_executor import SecurityValidator, validate_function_code, execute_code_safely, FunctionSignatureParser
-from .test_runner import (
-    TestCaseGenerator, TestResult, TestGenerationConfig,
-    TestCaseComplexity, InputFormat, TestCaseStandardizer,
-    TestResponseParser
-)
 from .function_registry import FunctionRegistry, get_registry
+
+# Import dialogue evolution if available
+try:
+    from .llm_dialogue_evolution import get_llm_dialogue_evolution, evolve_code_through_dialogue
+    DIALOGUE_EVOLUTION_AVAILABLE = True
+except ImportError:
+    DIALOGUE_EVOLUTION_AVAILABLE = False
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -57,12 +59,11 @@ class FunctionToolsInterface:
         """Execute code safely in sandboxed environment."""
         raise NotImplementedError
 
-    def generate_test_cases(self, func_name: str, func_code: str, task_description: str) -> List[Dict]:
-        """Generate test cases for a function."""
-        raise NotImplementedError
 
-    def run_tests(self, func_code: str, test_cases: List[Dict]) -> TestResult:
-        """Run test cases against function code."""
+
+    def improve_through_dialogue(self, func_code: str, func_spec: Dict[str, Any],
+                               llm_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Improve function through LLM dialogue."""
         raise NotImplementedError
 
     def has_function(self, func_name: str) -> bool:
@@ -70,7 +71,7 @@ class FunctionToolsInterface:
         raise NotImplementedError
 
     def register_function(self, func_name: str, func_code: str, description: str,
-                         task_origin: str = "", test_cases: List[Dict] = None) -> bool:
+                         task_origin: str = "") -> bool:
         """Register function in registry."""
         raise NotImplementedError
 
@@ -85,27 +86,23 @@ class FunctionTools(FunctionToolsInterface):
     Unified function tools implementation using factory/proxy pattern.
 
     This class integrates all function-related operations through a single
-    interface, providing security validation, test generation, and registration.
+    interface, providing security validation, dialogue improvement, and registration.
     """
 
     def __init__(self, llm_config: Dict[str, Any] = None,
-                 test_config: TestGenerationConfig = None,
                  registry: FunctionRegistry = None):
         """
         Initialize function tools with configuration.
 
         Args:
-            llm_config: LLM configuration for test generation
-            test_config: Test generation configuration
+            llm_config: LLM configuration for dialogue improvement
             registry: Function registry instance
         """
         self.llm_config = llm_config
-        self.test_config = test_config or TestGenerationConfig()
         self.registry = registry or get_registry()
 
         # Initialize components
         self.security_validator = SecurityValidator()
-        self.test_generator = TestCaseGenerator(self.test_config, self.llm_config)
 
         logger.info("FunctionTools initialized with modular components")
 
@@ -134,166 +131,56 @@ class FunctionTools(FunctionToolsInterface):
         """
         return execute_code_safely(code, timeout_seconds)
 
-    def generate_test_cases(self, func_name: str, func_code: str, task_description: str) -> List[Dict]:
+    def improve_through_dialogue(self, func_code: str, func_spec: Dict[str, Any],
+                               llm_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Generate test cases for a function.
-
-        Args:
-            func_name: Name of the function
-            func_code: Function source code
-            task_description: Description of what the function should do
-
-        Returns:
-            List of test case dictionaries
-        """
-        return self.test_generator.generate_test_cases(func_name, func_code, task_description)
-
-    def test_function_with_cases(self, func_code: str, func_name: str, test_cases: List[Dict]) -> Tuple[bool, str, str]:
-        """
-        Test function with provided test cases (backward compatibility method).
+        Improve function through LLM dialogue.
 
         Args:
             func_code: Function source code
-            func_name: Name of the function
-            test_cases: List of test cases
+            func_spec: Function specification
+            llm_config: LLM configuration for dialogue agents
 
         Returns:
-            Tuple of (success, status_message, details)
+            Dialogue improvement result
         """
-        test_result = self.run_tests(func_code, test_cases)
-        return (test_result.success, test_result.error_msg, str(test_result.test_results))
+        if not DIALOGUE_EVOLUTION_AVAILABLE:
+            return {
+                'success': False,
+                'error': 'LLM dialogue evolution not available'
+            }
 
-    def run_tests(self, func_code: str, test_cases: List[Dict]) -> TestResult:
-        """
-        Run test cases against function code.
-
-        Args:
-            func_code: Function source code
-            test_cases: List of test cases to run
-
-        Returns:
-            TestResult with success status and results
-        """
         try:
-            # Validate code first
-            is_valid, status_msg, _ = self.validate_function_code(func_code)
-            if not is_valid:
-                return TestResult(
-                    success=False,
-                    error_msg=f"Code validation failed: {status_msg}",
-                    test_results=[]
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            result = loop.run_until_complete(
+                evolve_code_through_dialogue(
+                    func_code=func_code,
+                    func_spec=func_spec,
+                    llm_config=llm_config or self.llm_config,
+                    max_rounds=10
                 )
-
-            # Execute tests safely
-            test_results = []
-            all_passed = True
-
-            for i, test_case in enumerate(test_cases):
-                try:
-                    # Prepare test execution code
-                    test_input = test_case.get('input', {})
-                    expected_output = test_case.get('expected_output', 'auto_generated')
-
-                    # Create test execution code
-                    test_code = self._create_test_execution_code(func_code, test_input, expected_output)
-
-                    # Execute test
-                    success, output, namespace = self.execute_code_safely(test_code, timeout_seconds=5)
-
-                    test_result = {
-                        'test_index': i,
-                        'description': test_case.get('description', f'Test {i+1}'),
-                        'input': test_input,
-                        'expected_output': expected_output,
-                        'actual_output': namespace.get('actual_result', 'No result'),
-                        'passed': success and namespace.get('test_passed', False),
-                        'error': output if not success else None
-                    }
-
-                    test_results.append(test_result)
-
-                    if not test_result['passed']:
-                        all_passed = False
-
-                except Exception as e:
-                    test_results.append({
-                        'test_index': i,
-                        'description': test_case.get('description', f'Test {i+1}'),
-                        'input': test_input,
-                        'expected_output': expected_output,
-                        'actual_output': None,
-                        'passed': False,
-                        'error': str(e)
-                    })
-                    all_passed = False
-
-            return TestResult(
-                success=all_passed,
-                error_msg="" if all_passed else "Some tests failed",
-                test_results=test_results
             )
 
-        except Exception as e:
-            logger.error(f"Test execution failed: {e}")
-            return TestResult(
-                success=False,
-                error_msg=f"Test execution error: {str(e)}",
-                test_results=[]
-            )
-
-    def _create_test_execution_code(self, func_code: str, test_input: Dict[str, Any],
-                                  expected_output: Any) -> str:
-        """Create code for test execution."""
-        # Extract function name from code
-        import ast
-        try:
-            tree = ast.parse(func_code)
-            func_name = None
-            for node in ast.walk(tree):
-                if isinstance(node, ast.FunctionDef):
-                    func_name = node.name
-                    break
-
-            if not func_name:
-                raise ValueError("No function definition found in code")
-
-            # Create test execution code
-            test_code = f"""
-{func_code}
-
-# Test execution
-try:
-    # Prepare arguments
-    test_input = {repr(test_input)}
-    expected_output = {repr(expected_output)}
-
-    # Call function with test input
-    if isinstance(test_input, dict):
-        actual_result = {func_name}(**test_input)
-    else:
-        actual_result = {func_name}(test_input)
-
-    # Check result
-    if expected_output == 'auto_generated':
-        test_passed = True  # Accept any result for auto-generated tests
-    else:
-        test_passed = actual_result == expected_output
-
-except Exception as e:
-    actual_result = f"Error: {{str(e)}}"
-    test_passed = False
-"""
-            return test_code
+            loop.close()
+            return result
 
         except Exception as e:
-            logger.error(f"Failed to create test execution code: {e}")
-            return f"""
-{func_code}
+            logger.error(f"Dialogue improvement failed: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
-# Simple test execution
-actual_result = "Test creation failed: {str(e)}"
-test_passed = False
-"""
+
+
+
+
+
+
+
 
     def has_function(self, func_name: str) -> bool:
         """
@@ -308,7 +195,7 @@ test_passed = False
         return self.registry.has_function(func_name)
 
     def register_function(self, func_name: str, func_code: str, description: str,
-                         task_origin: str = "", test_cases: List[Dict] = None) -> bool:
+                         task_origin: str = "") -> bool:
         """
         Register function in registry.
 
@@ -317,23 +204,21 @@ test_passed = False
             func_code: Function source code
             description: Function description
             task_origin: Origin task or context
-            test_cases: List of test cases
 
         Returns:
             True if registration successful, False otherwise
         """
-        return self.registry.register_function(func_name, func_code, description, task_origin, test_cases)
+        return self.registry.register_function(func_name, func_code, description, task_origin)
 
     def create_function_complete(self, func_name: str, task_description: str,
                                func_code: str) -> FunctionCreationResult:
         """
-        Complete function creation workflow.
+        Complete function creation workflow with dialogue improvement.
 
         This method performs the full function creation process:
         1. Validate function code
-        2. Generate test cases
-        3. Run tests
-        4. Register function if successful
+        2. Improve through LLM dialogue (optional)
+        3. Register function
 
         Args:
             func_name: Name of the function
@@ -363,41 +248,45 @@ test_passed = False
                 validation_results=validation_results
             )
 
-        # Step 2: Generate test cases
-        try:
-            test_cases = self.generate_test_cases(func_name, func_code, task_description)
-            logger.info(f"Generated {len(test_cases)} test cases")
-        except Exception as e:
-            logger.error(f"Test case generation failed: {e}")
-            test_cases = []
-
-        # Step 3: Run tests
-        test_result = self.run_tests(func_code, test_cases)
-
-        # Step 4: Register function if tests pass
-        registration_success = False
-        if test_result.success:
+        # Step 2: Optional dialogue improvement
+        dialogue_results = []
+        if DIALOGUE_EVOLUTION_AVAILABLE and self.llm_config:
             try:
-                registration_success = self.register_function(
-                    func_name, func_code, task_description,
-                    task_origin="FunctionTools.create_function_complete",
-                    test_cases=test_cases
-                )
-                if registration_success:
-                    logger.info(f"Function '{func_name}' successfully registered")
+                func_spec = {
+                    'name': func_name,
+                    'description': task_description,
+                    'signature': f"def {func_name}(...)"
+                }
+
+                dialogue_result = self.improve_through_dialogue(func_code, func_spec, self.llm_config)
+                if dialogue_result.get('success'):
+                    dialogue_results = dialogue_result.get('insights', {})
+                    logger.info(f"Dialogue improvement completed for {func_name}")
                 else:
-                    logger.warning(f"Function '{func_name}' tests passed but registration failed")
+                    logger.warning(f"Dialogue improvement failed: {dialogue_result.get('error', 'Unknown error')}")
             except Exception as e:
-                logger.error(f"Function registration failed: {e}")
+                logger.error(f"Dialogue improvement error: {e}")
+
+        # Step 3: Register function
+        registration_success = False
+        try:
+            registration_success = self.register_function(
+                func_name, func_code, task_description,
+                task_origin="FunctionTools.create_function_complete"
+            )
+            if registration_success:
+                logger.info(f"Function '{func_name}' successfully registered")
+            else:
+                logger.warning(f"Function '{func_name}' registration failed")
+        except Exception as e:
+            logger.error(f"Function registration failed: {e}")
 
         # Create result
-        overall_success = is_valid and test_result.success and registration_success
+        overall_success = is_valid and registration_success
         error_message = ""
         if not overall_success:
             if not is_valid:
                 error_message = f"Validation failed: {status_msg}"
-            elif not test_result.success:
-                error_message = f"Tests failed: {test_result.error_msg}"
             elif not registration_success:
                 error_message = "Registration failed"
 
@@ -406,7 +295,7 @@ test_passed = False
             function_name=func_name,
             function_code=func_code,
             error_message=error_message,
-            test_results=test_result.test_results,
+            test_results=dialogue_results,  # Use dialogue results instead of test results
             validation_results=validation_results
         )
 
@@ -424,13 +313,13 @@ test_passed = False
 
     def search_functions(self, query: str) -> List[Dict[str, Any]]:
         """
-        Search for functions based on query string.
+        Enhanced search for functions based on query string with improved accuracy.
 
         Args:
             query: Search query (can match function name, description, or keywords)
 
         Returns:
-            List of matching function information dictionaries
+            List of matching function information dictionaries with relevance scores
         """
         try:
             all_functions = self.list_functions()
@@ -439,6 +328,9 @@ test_passed = False
             query_lower = query.lower().strip()
             if not query_lower:
                 return []
+
+            # Split query into words for better matching
+            query_words = [word for word in query_lower.split() if len(word) > 2]
 
             for func_name in all_functions:
                 # Skip metadata entries
@@ -450,71 +342,115 @@ test_passed = False
                     if not func_info or not isinstance(func_info, dict):
                         continue
 
-                    # Search in function name
-                    name_match = query_lower in func_name.lower()
+                    # Calculate relevance score
+                    score = 0
+                    match_types = []
 
-                    # Search in description
+                    func_name_lower = func_name.lower()
                     description = func_info.get('description', '').lower()
-                    desc_match = query_lower in description
-
-                    # Search in code (if available)
                     code = func_info.get('code', '').lower()
-                    code_match = query_lower in code
 
-                    # If any match found, add to results
-                    if name_match or desc_match or code_match:
+                    # Exact phrase matching (highest priority)
+                    if query_lower in func_name_lower:
+                        score += 100
+                        match_types.append('name_exact')
+                    elif query_lower in description:
+                        score += 80
+                        match_types.append('description_exact')
+                    elif query_lower in code:
+                        score += 60
+                        match_types.append('code_exact')
+
+                    # Word-based matching
+                    for word in query_words:
+                        if word in func_name_lower:
+                            score += 50
+                            if 'name' not in match_types:
+                                match_types.append('name')
+                        if word in description:
+                            score += 30
+                            if 'description' not in match_types:
+                                match_types.append('description')
+                        if word in code:
+                            score += 20
+                            if 'code' not in match_types:
+                                match_types.append('code')
+
+                    # Fuzzy matching for common variations
+                    fuzzy_matches = self._get_fuzzy_matches(query_lower, func_name_lower, description)
+                    score += fuzzy_matches * 10
+
+                    # Only include if there's a meaningful match
+                    if score > 0:
                         match_info = {
                             'name': func_name,
                             'description': func_info.get('description', 'No description'),
                             'signature': func_info.get('signature', 'No signature available'),
-                            'match_type': []
+                            'docstring': func_info.get('docstring', ''),
+                            'match_type': match_types,
+                            'score': score
                         }
-
-                        # Record match types
-                        if name_match:
-                            match_info['match_type'].append('name')
-                        if desc_match:
-                            match_info['match_type'].append('description')
-                        if code_match:
-                            match_info['match_type'].append('code')
-
                         matching_functions.append(match_info)
 
                 except Exception as e:
                     logger.debug(f"Error processing function {func_name} during search: {e}")
                     continue
 
-            # Sort by relevance (name matches first, then description matches)
-            matching_functions.sort(key=lambda x: (
-                'name' not in x['match_type'],  # Name matches first
-                'description' not in x['match_type'],  # Then description matches
-                x['name']  # Finally alphabetical
-            ))
+            # Sort by relevance score (highest first)
+            matching_functions.sort(key=lambda x: x['score'], reverse=True)
 
-            logger.info(f"Search for '{query}' found {len(matching_functions)} matches")
+            # Filter out very low relevance matches if we have better ones
+            if matching_functions and matching_functions[0]['score'] > 50:
+                matching_functions = [f for f in matching_functions if f['score'] >= 20]
+
+            logger.info(f"Enhanced search for '{query}' found {len(matching_functions)} matches")
             return matching_functions
 
         except Exception as e:
             logger.error(f"Function search failed: {e}")
             return []
 
+    def _get_fuzzy_matches(self, query: str, name: str, description: str) -> int:
+        """Calculate fuzzy matching score for common variations."""
+        fuzzy_score = 0
+
+        # Common word variations
+        variations = {
+            'validate': ['check', 'verify', 'test'],
+            'generate': ['create', 'make', 'build'],
+            'calculate': ['compute', 'find', 'get'],
+            'email': ['mail', 'e-mail'],
+            'password': ['pass', 'pwd'],
+            'string': ['str', 'text'],
+            'number': ['num', 'digit'],
+        }
+
+        for base_word, variants in variations.items():
+            if base_word in query:
+                for variant in variants:
+                    if variant in name or variant in description:
+                        fuzzy_score += 1
+            elif any(variant in query for variant in variants):
+                if base_word in name or base_word in description:
+                    fuzzy_score += 1
+
+        return fuzzy_score
+
 
 # Factory function for creating FunctionTools instances
 def create_function_tools(llm_config: Dict[str, Any] = None,
-                         test_config: TestGenerationConfig = None,
                          registry: FunctionRegistry = None) -> FunctionTools:
     """
     Factory function to create FunctionTools instance.
 
     Args:
         llm_config: LLM configuration
-        test_config: Test generation configuration
         registry: Function registry instance
 
     Returns:
         Configured FunctionTools instance
     """
-    return FunctionTools(llm_config, test_config, registry)
+    return FunctionTools(llm_config, registry)
 
 
 # Global instance for backward compatibility

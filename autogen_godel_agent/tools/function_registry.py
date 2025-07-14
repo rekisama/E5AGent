@@ -60,8 +60,30 @@ class FunctionRegistry:
             if self.registry_path.exists():
                 with open(self.registry_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    logger.info(f"Loaded {len(data)} functions from registry")
-                    return data
+
+                # Handle different data structures for backward compatibility
+                if isinstance(data, dict):
+                    if 'functions' in data:
+                        # New format with functions and metadata separated
+                        functions = data['functions']
+                        logger.info(f"Loaded {len(functions)} functions from registry (new format)")
+                        return functions
+                    elif 'metadata' in data:
+                        # Old format with metadata wrapper
+                        functions = data.get('metadata', {})
+                        logger.info(f"Loaded {len(functions)} functions from registry (old format)")
+                        return functions
+                    else:
+                        # Very old format or mixed format - extract only function objects
+                        functions = {}
+                        for k, v in data.items():
+                            if isinstance(v, dict) and 'name' in v:
+                                functions[k] = v
+                        logger.info(f"Loaded {len(functions)} functions from registry (mixed format)")
+                        return functions
+                else:
+                    logger.warning("Registry data is not a dictionary, starting with empty registry")
+                    return {}
             else:
                 logger.info("Registry file not found, starting with empty registry")
                 return {}
@@ -72,8 +94,16 @@ class FunctionRegistry:
                 if self.backup_path.exists():
                     with open(self.backup_path, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                        logger.info(f"Loaded {len(data)} functions from backup registry")
-                        return data
+                        # Apply same logic for backup
+                        if isinstance(data, dict) and 'functions' in data:
+                            functions = data['functions']
+                        elif isinstance(data, dict) and 'metadata' in data:
+                            functions = data.get('metadata', {})
+                        else:
+                            functions = {k: v for k, v in data.items()
+                                       if isinstance(v, dict) and 'name' in v}
+                        logger.info(f"Loaded {len(functions)} functions from backup registry")
+                        return functions
             except Exception as backup_e:
                 logger.error(f"Failed to load backup registry: {backup_e}")
 
@@ -89,9 +119,18 @@ class FunctionRegistry:
                 with open(self.backup_path, 'w', encoding='utf-8') as f:
                     f.write(backup_data)
 
-            # Save current registry
+            # Save current registry in new format
+            registry_data = {
+                "functions": self.functions,
+                "metadata": {
+                    "last_updated": datetime.datetime.now().isoformat(),
+                    "version": "2.0",
+                    "total_functions": len(self.functions)
+                }
+            }
+
             with open(self.registry_path, 'w', encoding='utf-8') as f:
-                json.dump(self.functions, f, indent=2, ensure_ascii=False)
+                json.dump(registry_data, f, indent=2, ensure_ascii=False)
 
             logger.debug(f"Registry saved with {len(self.functions)} functions")
             return True
@@ -113,7 +152,7 @@ class FunctionRegistry:
         return func_name in self.functions
 
     def register_function(self, func_name: str, func_code: str, description: str,
-                         task_origin: str = "", test_cases: List[Dict] = None) -> bool:
+                         task_origin: str = "") -> bool:
         """
         Register a function in the registry.
 
@@ -122,7 +161,6 @@ class FunctionRegistry:
             func_code: Function source code
             description: Function description
             task_origin: Origin task or context
-            test_cases: List of test cases for the function
 
         Returns:
             True if registration successful, False otherwise
@@ -137,8 +175,7 @@ class FunctionRegistry:
                 'code': func_code,
                 'description': description,
                 'task_origin': task_origin,
-                'test_cases': test_cases or [],
-                'hash': func_hash,
+                'code_hash': func_hash,
                 'created_at': datetime.datetime.now().isoformat(),
                 'updated_at': datetime.datetime.now().isoformat(),
                 'version': 1
@@ -311,9 +348,9 @@ def has_function(func_name: str) -> bool:
 
 
 def register_function(func_name: str, func_code: str, description: str,
-                     task_origin: str = "", test_cases: List[Dict] = None) -> bool:
+                     task_origin: str = "") -> bool:
     """Register a function in the registry."""
-    return get_registry().register_function(func_name, func_code, description, task_origin, test_cases)
+    return get_registry().register_function(func_name, func_code, description, task_origin)
 
 
 def get_function(func_name: str) -> Optional[Dict[str, Any]]:

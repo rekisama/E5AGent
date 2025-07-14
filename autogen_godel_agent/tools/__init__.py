@@ -16,7 +16,7 @@ AutoGen Self-Expanding Agent System - Tools Module
 from .function_tools import FunctionToolsInterface, get_function_tools
 from .function_registry import get_registry, register_function, has_function, get_function, list_functions
 from .secure_executor import SecurityValidator, validate_function_code, execute_code_safely
-from .test_runner import TestCaseGenerator, TestResult
+from .autogen_test_evolution import get_autogen_test_evolution, evolve_function_with_autogen
 
 # 函数组合模块 (新增)
 from .function_composer import FunctionComposer, get_function_composer, CompositeFunction, SubTask, FunctionMatch

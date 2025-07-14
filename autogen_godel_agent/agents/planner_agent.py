@@ -88,10 +88,14 @@ Analyze user tasks, search existing functions, determine if new functions are ne
 - `search_functions(query)` - Search for existing functions
 - `list_all_functions()` - List all available functions
 - `get_function_info(name)` - Get detailed function info
+- `verify_function_exists(name)` - Verify if a function exists (use before claiming it exists)
 
 ## SEARCH STRATEGY
-Use multiple search terms: specific → general → action words
-Examples: "email validation" → "validation" → "check"
+🚨 CRITICAL: ONLY use functions that are ACTUALLY RETURNED by search_functions()
+1. Use multiple search terms: specific → general → action words
+2. Examples: "email validation" → "validation" → "check"
+3. NEVER assume a function exists without confirming via search
+4. If search returns "No functions found", the function does NOT exist
 
 ## CRITICAL: OUTPUT FORMAT REQUIREMENTS
 🚨 **MANDATORY**: Your response MUST contain a JSON code block with the exact structure below.
@@ -138,6 +142,7 @@ Examples: "email validation" → "validation" → "check"
                 "search_functions": self._search_functions,
                 "list_all_functions": self._list_all_functions,
                 "get_function_info": self._get_function_info,
+                "verify_function_exists": self._verify_function_exists,
             }
         )
     
@@ -145,25 +150,54 @@ Examples: "email validation" → "validation" → "check"
         """
         Search the function registry for functions matching a query string.
 
+        IMPORTANT: This function performs EXACT searches against the actual function registry.
+        It will ONLY return functions that actually exist in the system.
+
         Parameters:
             query (str): A short description of the function to search for.
                         Examples: "validate email", "calculate factorial", "phone number"
 
         Returns:
             str: A formatted list of matching functions with name, description, and signature.
+                 Returns "No functions found" if no matches exist.
         """
         try:
+            # Perform actual search against registry
             results = self.function_tools.search_functions(query)
-            if not results:
-                return f"No functions found matching '{query}'"
 
-            response = f"Found {len(results)} function(s) matching '{query}':\n\n"
+            # Also try variations of the query for better coverage
+            if not results and len(query.split()) > 1:
+                # Try individual words
+                for word in query.split():
+                    if len(word) > 2:  # Skip very short words
+                        word_results = self.function_tools.search_functions(word)
+                        results.extend(word_results)
+
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_results = []
+            for func in results:
+                if func['name'] not in seen:
+                    seen.add(func['name'])
+                    unique_results.append(func)
+            results = unique_results
+
+            if not results:
+                # Provide helpful information about what functions ARE available
+                all_functions = self.function_tools.list_functions()
+                if all_functions:
+                    available_names = [name for name in all_functions[:5]]  # Show first 5
+                    return f"❌ No functions found matching '{query}'.\n\nAvailable functions include: {', '.join(available_names)}\n\nUse list_all_functions() to see all available functions."
+                else:
+                    return f"❌ No functions found matching '{query}'. The function registry is empty."
+
+            response = f"✅ Found {len(results)} function(s) matching '{query}':\n\n"
             for func in results:
                 response += f"- **{func['name']}**: {func['description']}\n"
                 response += f"  Signature: {func['signature']}\n"
-                if 'score' in func:
-                    response += f"  Relevance Score: {func['score']:.2f}\n"
-                if func['docstring']:
+                if 'match_type' in func:
+                    response += f"  Match Type: {', '.join(func['match_type'])}\n"
+                if func.get('docstring'):
                     # Truncate long docstrings for readability
                     doc = func['docstring'][:200] + "..." if len(func['docstring']) > 200 else func['docstring']
                     response += f"  Documentation: {doc}\n"
@@ -171,7 +205,7 @@ Examples: "email validation" → "validation" → "check"
 
             return response
         except Exception as e:
-            return f"Error searching functions: {e}"
+            return f"❌ Error searching functions: {e}"
     
     def _list_all_functions(self) -> str:
         """
@@ -234,7 +268,31 @@ Examples: "email validation" → "validation" → "check"
             return response
         except Exception as e:
             return f"Error getting function info: {e}"
-    
+
+    def _verify_function_exists(self, function_name: str) -> str:
+        """
+        Verify if a function with the exact name exists in the registry.
+
+        CRITICAL: Use this to double-check before claiming a function exists.
+
+        Parameters:
+            function_name (str): The exact name of the function to verify
+
+        Returns:
+            str: "EXISTS" if function exists, "NOT_FOUND" if it doesn't exist
+        """
+        try:
+            all_functions = self.function_tools.list_functions()
+            function_names = [func['name'] if isinstance(func, dict) else func for func in all_functions]
+
+            if function_name in function_names:
+                return f"✅ EXISTS: Function '{function_name}' is confirmed to exist in the registry."
+            else:
+                return f"❌ NOT_FOUND: Function '{function_name}' does NOT exist in the registry."
+
+        except Exception as e:
+            return f"❌ Error verifying function: {e}"
+
     def analyze_task(self, task_description: str, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Use LLM to analyze a task and determine what functions are needed.
@@ -273,8 +331,10 @@ Examples: "email validation" → "validation" → "check"
 
 ## REQUIRED ACTIONS
 - Use `search_functions()` with different keywords
+- Use `verify_function_exists()` to confirm any function you mention
 - Use `list_all_functions()` if searches fail
 - Use `get_function_info()` for details
+- NEVER claim a function exists without verification
 
 ## OUTPUT
 🚨 CRITICAL: Respond with the required JSON format showing your analysis results.

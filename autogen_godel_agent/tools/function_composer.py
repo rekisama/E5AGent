@@ -29,7 +29,7 @@ import autogen
 
 from .function_registry import get_registry
 from .secure_executor import validate_function_code, execute_code_safely
-from .test_runner import TestCaseGenerator, TestResult
+from .autogen_test_evolution import get_autogen_test_evolution, evolve_function_with_autogen
 from .json_utils import extract_json_block, parse_json_with_fallback
 from .task_utils import SubTask, create_simple_fallback_tasks, get_fallback_configs, create_subtask_from_dict
 from .type_compatibility import check_input_compatibility, check_output_compatibility

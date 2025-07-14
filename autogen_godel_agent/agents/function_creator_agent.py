@@ -74,11 +74,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from ..tools.function_tools import get_function_tools
-    from ..tools.test_runner import TestResult
     from ..config import Config
 except ImportError:
     from tools.function_tools import get_function_tools
-    from tools.test_runner import TestResult
     from config import Config
 
 
@@ -129,9 +127,9 @@ class FunctionCreatorAgent:
 
 Your responsibilities:
 1. Generate Python functions based on detailed specifications
-2. Create comprehensive test cases for the functions
+2. Use LLM dialogue to improve and evolve functions
 3. Ensure functions are safe, efficient, and well-documented
-4. Handle function testing and registration
+4. Handle function validation and registration
 
 When asked to create a function:
 1. Write clean, well-documented Python code
@@ -139,7 +137,7 @@ When asked to create a function:
 3. Add comprehensive docstrings
 4. Avoid dangerous operations (file I/O, system calls, imports of unsafe modules)
 5. Focus on pure functions when possible
-6. Generate appropriate test cases
+6. Use LLM dialogue for improvement instead of traditional testing
 
 Code generation guidelines:
 - Use only safe built-in functions and standard library modules (re, math, datetime, etc.)
@@ -150,12 +148,11 @@ Code generation guidelines:
 
 Available tools:
 - validate_function_code(code): Validate function syntax and safety
-- generate_test_cases(func_name, code, description): Generate test cases
-- test_function(code, func_name, test_cases): Test the function
-- register_function(func_name, func_code, description, task_origin, test_cases):
+- improve_through_dialogue(func_name, code, description): Improve function through LLM dialogue
+- register_function(func_name, func_code, description, task_origin):
   Register the function
 
-Always validate and test functions before attempting to register them."""
+Always validate functions and consider dialogue-based improvement before registration."""
 
         self.agent = autogen.AssistantAgent(
             name="FunctionCreator",
@@ -163,8 +160,7 @@ Always validate and test functions before attempting to register them."""
             llm_config=self.llm_config,
             function_map={
                 "validate_function_code": self._validate_function_code,
-                "generate_test_cases": self._generate_test_cases,
-                "test_function": self._test_function,
+                "improve_through_dialogue": self._improve_through_dialogue,
                 "register_function": self._register_function,
             }
         )
@@ -182,91 +178,72 @@ Always validate and test functions before attempting to register them."""
             logger.error(f"Validation error: {e}\n{traceback.format_exc()}")
             return f"❌ Validation error: {e}"
     
-    def _generate_test_cases(self, func_name: str, code: str, description: str) -> str:
-        """Generate test cases for a function."""
+    def _improve_through_dialogue(self, func_name: str, code: str, description: str) -> str:
+        """Improve function through LLM dialogue."""
         try:
-            test_cases = self.function_tools.generate_test_cases(func_name, code, description)
-            
-            if test_cases:
-                response = f"Generated {len(test_cases)} test case(s) for {func_name}:\n\n"
-                for i, test_case in enumerate(test_cases, 1):
-                    response += f"Test {i}: {test_case['description']}\n"
-                    response += f"  Input: {test_case['input']}\n"
-                    response += f"  Expected type: {test_case['expected_type']}\n\n"
-                return response
-            else:
-                return f"No test cases generated for {func_name}. You may need to create custom test cases."
-        except Exception as e:
-            logger.error(f"Error generating test cases: {e}\n{traceback.format_exc()}")
-            return f"❌ Error generating test cases: {e}"
-    
-    def _test_function(self, code: str, func_name: str, test_cases: Union[List[Dict], str, Dict] = None) -> str:
-        """Test a function with provided test cases."""
-        try:
-            # Enhanced input handling for multiple formats
-            # Use function_tools for test case normalization
-            if isinstance(test_cases, str):
-                try:
-                    import json
-                    normalized_test_cases = json.loads(test_cases) if test_cases != "[]" else []
-                except json.JSONDecodeError:
-                    normalized_test_cases = [{'description': test_cases, 'input': {}, 'expected_output': 'auto_generated'}]
-            elif isinstance(test_cases, dict):
-                normalized_test_cases = [test_cases]
-            elif isinstance(test_cases, list):
-                normalized_test_cases = test_cases
-            else:
-                normalized_test_cases = []
+            # Import dialogue evolution system
+            from ..tools.llm_dialogue_evolution import evolve_code_through_dialogue
 
-            # Use TestResult structure for better error handling with fallback
-            result_tuple = self.function_tools.test_function_with_cases(
-                code, func_name, normalized_test_cases
+            func_spec = {
+                "name": func_name,
+                "description": description,
+                "signature": f"def {func_name}(...)"
+            }
+
+            logger.info(f"🗣️ Starting dialogue improvement for {func_name}")
+
+            # Run dialogue evolution in sync context
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            result = loop.run_until_complete(
+                evolve_code_through_dialogue(
+                    func_code=code,
+                    func_spec=func_spec,
+                    llm_config=self.llm_config,
+                    max_rounds=10
+                )
             )
-            try:
-                test_result = TestResult.from_tuple(result_tuple)
-            except Exception as e:
-                logger.warning(f"Failed to parse TestResult, using fallback: {e}")
-                test_result = TestResult(success=False, error_msg=f"Result parsing error: {e}", test_results=[])
 
-            if test_result.success:
-                response = f"✅ All tests passed for {func_name}!\n\n"
-                if test_result.test_results:
-                    response += "Test Results:\n"
-                    for result in test_result.test_results:
-                        status = "✅" if result['success'] else "❌"
-                        response += f"{status} {result['description']}\n"
-                        if result['success']:
-                            response += f"   Result: {result['result']}\n"
-                        else:
-                            response += f"   Error: {result['error']}\n"
+            loop.close()
+
+            if result.get('success'):
+                insights = result.get('insights', {})
+                response = f"✅ Dialogue improvement completed for {func_name}:\n\n"
+
+                if insights.get('issues_raised'):
+                    response += f"🔍 Issues found: {len(insights['issues_raised'])}\n"
+                    for issue in insights['issues_raised'][:2]:
+                        response += f"  • {issue['content'][:100]}...\n"
+
+                if insights.get('improvements'):
+                    response += f"\n🛠️ Improvements suggested: {len(insights['improvements'])}\n"
+                    for improvement in insights['improvements'][:2]:
+                        response += f"  • {improvement['content'][:100]}...\n"
+
+                response += f"\n📝 Total dialogue messages: {len(result.get('dialogue_history', []))}"
                 return response
             else:
-                response = f"❌ Tests failed for {func_name}: {test_result.error_msg}\n\n"
-                if test_result.test_results:
-                    response += "Test Results:\n"
-                    for result in test_result.test_results:
-                        status = "✅" if result['success'] else "❌"
-                        response += f"{status} {result['description']}\n"
-                        if not result['success']:
-                            response += f"   Error: {result['error']}\n"
-                return response
+                return f"❌ Dialogue improvement failed: {result.get('error', 'Unknown error')}"
+
+        except ImportError:
+            return "⚠️ LLM dialogue system not available, skipping improvement"
         except Exception as e:
-            logger.error(f"Error testing function {func_name}: {e}\n{traceback.format_exc()}")
-            return f"❌ Error testing function: {e}"
+            logger.error(f"Error in dialogue improvement: {e}\n{traceback.format_exc()}")
+            return f"❌ Error in dialogue improvement: {e}"
+    
+
 
     def _register_function(self, name: str, code: str, description: str,
-                          origin: str = "", test_cases_json: str = "[]") -> str:
-        """Register a tested function to the registry."""
+                          origin: str = "") -> str:
+        """Register a function to the registry after dialogue improvement."""
         try:
-            # Parse test cases from JSON string
-            test_cases = json.loads(test_cases_json) if test_cases_json != "[]" else []
-
             success = self.function_tools.register_function(
                 func_name=name,
                 func_code=code,
                 description=description,
-                task_origin=origin,
-                test_cases=test_cases
+                task_origin=origin
             )
 
             if success:
@@ -349,39 +326,40 @@ Always validate and test functions before attempting to register them."""
                     if is_valid:
                         logger.info(f"Code validation passed for {extracted_name}")
 
-                        # Generate test cases using function_tools
-                        test_cases = self.function_tools.generate_test_cases(extracted_name, code, description)
-                        logger.debug(f"Generated {len(test_cases)} test cases for {extracted_name}")
+                        # Optional: Improve through dialogue
+                        if hasattr(self.function_tools, 'improve_through_dialogue'):
+                            try:
+                                func_spec = {
+                                    'name': extracted_name,
+                                    'description': description,
+                                    'signature': f"def {extracted_name}(...)"
+                                }
 
-                        # Test the function using TestResult structure with fallback
-                        result_tuple = self.function_tools.test_function_with_cases(code, extracted_name, test_cases)
-                        try:
-                            test_result = TestResult.from_tuple(result_tuple)
-                        except Exception as e:
-                            logger.warning(f"Failed to parse TestResult, using fallback: {e}")
-                            test_result = TestResult(success=False, error_msg=f"Result parsing error: {e}", test_results=[])
+                                dialogue_result = self.function_tools.improve_through_dialogue(
+                                    code, func_spec, self.llm_config
+                                )
 
-                        if test_result.success:
-                            logger.info(f"Function testing passed for {extracted_name}")
+                                if dialogue_result.get('success'):
+                                    logger.info(f"Dialogue improvement completed for {extracted_name}")
+                                else:
+                                    logger.warning(f"Dialogue improvement failed: {dialogue_result.get('error', 'Unknown error')}")
+                            except Exception as e:
+                                logger.warning(f"Dialogue improvement error: {e}")
 
-                            # Register the function with unified parameter naming
-                            register_success = self.function_tools.register_function(
-                                func_name=extracted_name,  # Fixed: use func_name for consistency
-                                func_code=code,
-                                description=description,
-                                task_origin=f"Auto-generated for: {description}",
-                                test_cases=test_cases
-                            )
+                        # Register the function
+                        register_success = self.function_tools.register_function(
+                            func_name=extracted_name,
+                            func_code=code,
+                            description=description,
+                            task_origin=f"Auto-generated for: {description}"
+                        )
 
-                            if register_success:
-                                logger.info(f"Function {extracted_name} successfully registered")
-                                return True, f"Successfully created and registered function '{extracted_name}'", code
-                            else:
-                                logger.error(f"Registration failed for {extracted_name}")
-                                return False, f"Function created but failed to register: {extracted_name}", code
+                        if register_success:
+                            logger.info(f"Function {extracted_name} successfully registered")
+                            return True, f"Successfully created and registered function '{extracted_name}'", code
                         else:
-                            logger.warning(f"Function testing failed for {extracted_name}: {test_result.error_msg}")
-                            return False, f"Function created but failed tests: {test_result.error_msg}", code
+                            logger.error(f"Registration failed for {extracted_name}")
+                            return False, f"Function created but failed to register: {extracted_name}", code
                     else:
                         logger.warning(f"Code validation failed for {func_name}: {error_msg}")
                         return False, f"Generated code validation failed: {error_msg}", code
@@ -401,10 +379,9 @@ Always validate and test functions before attempting to register them."""
         """Validate that function_tools has all required methods with correct signatures."""
         required_methods = {
             'validate_function_code': ['code'],
-            'test_function_with_cases': ['func_code', 'func_name', 'test_cases'],
+            'improve_through_dialogue': ['func_code', 'func_spec'],
             'register_function': ['func_name', 'func_code', 'description'],
-            'has_function': ['func_name'],
-            'generate_test_cases': ['func_name', 'func_code', 'task_description']
+            'has_function': ['func_name']
         }
 
         for method_name, expected_params in required_methods.items():
