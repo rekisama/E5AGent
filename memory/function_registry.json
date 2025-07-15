@@ -19,7 +19,17 @@
       "author": "system",
       "dependencies": [],
       "usage_count": 2,
-      "last_used": "2025-07-03T18:46:10.395520"
+      "last_used": "2025-07-03T18:46:10.395520",
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 8,
+        "char_count": 232,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 9,
+        "complexity_score": 10.32
+      }
     },
     "validate_email": {
       "name": "validate_email",
@@ -49,7 +59,17 @@
       "author": "test_user",
       "dependencies": [],
       "usage_count": 0,
-      "last_used": null
+      "last_used": null,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 5,
+        "char_count": 198,
+        "import_count": 1,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 5,
+        "complexity_score": 11.98
+      }
     },
     "test_function": {
       "name": "test_function",
@@ -60,7 +80,17 @@
       "code_hash": "95200e4c47a69aba5de52d63f35c5d63",
       "created_at": "2025-07-04T15:15:51.887353",
       "updated_at": "2025-07-04T15:15:51.887353",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 3,
+        "char_count": 77,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 3,
+        "complexity_score": 3.77
+      }
     },
     "read_csv_file": {
       "name": "read_csv_file",
@@ -71,7 +101,17 @@
       "code_hash": "4a56c37b917d519fd322a25bf3cefda4",
       "created_at": "2025-07-04T15:54:26.949063",
       "updated_at": "2025-07-04T15:54:26.949063",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 12,
+        "char_count": 340,
+        "import_count": 1,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 12,
+        "complexity_score": 20.4
+      }
     },
     "calculate_statistics": {
       "name": "calculate_statistics",
@@ -82,7 +122,17 @@
       "code_hash": "6d012c32885c18f38b9e3be8ef9c2b10",
       "created_at": "2025-07-04T15:54:26.954882",
       "updated_at": "2025-07-04T15:54:26.954882",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 20,
+        "char_count": 715,
+        "import_count": 1,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 23,
+        "complexity_score": 32.15
+      }
     },
     "generate_report": {
       "name": "generate_report",
@@ -93,7 +143,17 @@
       "code_hash": "d268e1a502b657e900f494b0edf73a12",
       "created_at": "2025-07-04T15:54:26.960345",
       "updated_at": "2025-07-04T15:54:26.960345",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 17,
+        "char_count": 788,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 20,
+        "complexity_score": 24.88
+      }
     },
     "create_a_simple_calculator_function_1752215669": {
       "name": "create_a_simple_calculator_function_1752215669",
@@ -103,7 +163,17 @@
       "code_hash": "95d1e004eb3faccc3433ad2b82bccc70",
       "created_at": "2025-07-11T14:37:05.772595",
       "updated_at": "2025-07-11T14:37:05.772595",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 40,
+        "char_count": 1838,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 26,
+        "complexity_score": 58.379999999999995
+      }
     },
     "create_a_string_reversal_function_1752217320": {
       "name": "create_a_string_reversal_function_1752217320",
@@ -113,17 +183,38 @@
       "code_hash": "0d5fa746b9e5794bdd40c69355c7719c",
       "created_at": "2025-07-11T15:03:56.743471",
       "updated_at": "2025-07-11T15:03:56.743471",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 25,
+        "char_count": 1275,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 21,
+        "complexity_score": 37.75
+      }
     },
     "create_a_password_strength_checker_function_1752217961": {
       "name": "create_a_password_strength_checker_function_1752217961",
-      "code": "import re\nimport math\nfrom typing import Dict, List, Any\n\ndef create_a_password_strength_checker_function_1752217961(password: str) -> Dict[str, Any]:\n    \"\"\"\n    Evaluates password strength based on multiple criteria and provides improvement suggestions.\n\n    The function checks:\n    - Length (minimum 12 characters recommended)\n    - Presence of uppercase, lowercase, numbers, and special characters\n    - Character diversity and entropy\n    - Common patterns and dictionary words\n    - Sequential or repeated characters\n\n    Parameters:\n        password (str): The password string to evaluate\n\n    Returns:\n        Dict[str, Any]: A dictionary containing:\n            - 'score' (int): Strength score from 1 (weak) to 5 (strong)\n            - 'feedback' (List[str]): List of improvement suggestions\n            - 'entropy' (float): Calculated entropy bits\n            - 'length' (int): Password length\n\n    Examples:\n        >>> create_a_password_strength_checker_function_1752217961('weakpass')\n        {'score': 1, 'feedback': ['Too short (minimum 12 characters recommended)', ...], ...}\n\n        >>> create_a_password_strength_checker_function_1752217961('S7r0ngP@$$w0rd!')\n        {'score': 4, 'feedback': ['Good length', ...], ...}\n    \"\"\"\n    if not isinstance(password, str):\n        return {\n            'score': 0,\n            'feedback': ['Invalid input: password must be a string'],\n            'entropy': 0.0,\n            'length': 0\n        }\n\n    feedback = []\n    score = 0\n    length = len(password)\n\n    # Common weak passwords and patterns to check against\n    common_passwords = {\n        'password', '123456', 'qwerty', 'letmein', 'welcome',\n        'admin', 'password1', '12345678', '123456789', '123123'\n    }\n    common_patterns = [\n        r'(\\w)\\1{2,}',  # Repeated characters\n        r'123\\d*',      # Sequential numbers\n        r'qwerty\\d*',   # Keyboard patterns\n        r'abc\\d*',      # Alphabet sequences\n    ]\n\n    # Character type checks\n    has_lower = any(c.islower() for c in password)\n    has_upper = any(c.isupper() for c in password)\n    has_digit = any(c.isdigit() for c in password)\n    has_special = any(not c.isalnum() for c in password)\n\n    # Calculate character diversity\n    unique_chars = len(set(password))\n    diversity = unique_chars / length if length > 0 else 0\n\n    # Calculate entropy\n    char_pool = 0\n    if has_lower:\n        char_pool += 26\n    if has_upper:\n        char_pool += 26\n    if has_digit:\n        char_pool += 10\n    if has_special:\n        char_pool += 32  # Approximate common special chars\n\n    entropy = length * math.log2(char_pool) if char_pool > 0 else 0\n\n    # Length check\n    if length < 8:\n        feedback.append(\"Very short (minimum 12 characters recommended)\")\n    elif length < 12:\n        feedback.append(\"Too short (minimum 12 characters recommended)\")\n    else:\n        feedback.append(\"Good length\")\n        score += 1\n\n    # Character diversity checks\n    if not has_lower:\n        feedback.append(\"Missing lowercase letters\")\n    else:\n        score += 0.5\n\n    if not has_upper:\n        feedback.append(\"Missing uppercase letters\")\n    else:\n        score += 0.5\n\n    if not has_digit:\n        feedback.append(\"Missing numbers\")\n    else:\n        score += 0.5\n\n    if not has_special:\n        feedback.append(\"Missing special characters\")\n    else:\n        score += 0.5\n\n    # Diversity check\n    if diversity < 0.5:\n        feedback.append(f\"Low character diversity ({diversity:.1%} unique characters)\")\n    else:\n        score += 0.5\n\n    # Entropy check\n    if entropy < 40:\n        feedback.append(f\"Low entropy ({entropy:.1f} bits)\")\n    elif entropy < 60:\n        feedback.append(f\"Moderate entropy ({entropy:.1f} bits)\")\n        score += 1\n    else:\n        feedback.append(f\"High entropy ({entropy:.1f} bits)\")\n        score += 1.5\n\n    # Common password checks\n    if password.lower() in common_passwords:\n        feedback.append(\"Common dictionary password\")\n        score = max(1, score - 1)\n\n    for pattern in common_patterns:\n        if re.search(pattern, password, re.IGNORECASE):\n            feedback.append(\"Contains common pattern\")\n            score = max(1, score - 0.5)\n            break\n\n    # Final score adjustment (1-5 scale)\n    score = min(5, max(1, round(score)))\n\n    return {\n        'score': score,\n        'feedback': feedback,\n        'entropy': round(entropy, 2),\n        'length': length\n    }",
+      "code": null,
       "description": "Comprehensively evaluates password strength based on multiple criteria including length, character diversity, entropy, and common password patterns. Returns a score and detailed improvement suggestions.",
       "task_origin": "Auto-generated for: Comprehensively evaluates password strength based on multiple criteria including length, character diversity, entropy, and common password patterns. Returns a score and detailed improvement suggestions.",
       "code_hash": "668c452c6700de661d07ee0fe6653b3e",
       "created_at": "2025-07-11T15:14:51.114386",
       "updated_at": "2025-07-11T15:14:51.114386",
-      "version": 1
+      "version": 1,
+      "storage_type": "complex",
+      "complexity": {
+        "line_count": 112,
+        "char_count": 4424,
+        "import_count": 3,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 27,
+        "complexity_score": 171.24
+      },
+      "code_file": "E:\\E5Agent\\memory\\functions\\complex\\create_a_password_strength_checker_function_1752217961.py"
     },
     "create_a_url_validator_function_1752219812": {
       "name": "create_a_url_validator_function_1752219812",
@@ -133,22 +224,84 @@
       "code_hash": "6dfb426101205189a96e0b7595d10a80",
       "created_at": "2025-07-11T15:46:55.469980",
       "updated_at": "2025-07-11T15:46:55.469980",
-      "version": 1
+      "version": 1,
+      "storage_type": "inline",
+      "complexity": {
+        "line_count": 43,
+        "char_count": 1963,
+        "import_count": 2,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 24,
+        "complexity_score": 72.63
+      }
     },
     "create_a_simple_website_with_html_and_css_1752556793": {
       "name": "create_a_simple_website_with_html_and_css_1752556793",
-      "code": "from typing import Any, Dict, Optional, List\nimport datetime\n\ndef create_a_simple_website_with_html_and_css_1752556793(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:\n    \"\"\"\n    Generates a complete web project structure with HTML, CSS, and optional JavaScript files.\n    Returns the structure and boilerplate code that would be created, without actual file operations.\n\n    Args:\n        config: A dictionary containing configuration options. Expected keys:\n            - project_name (str): Name of the project (default: 'my_website')\n            - include_js (bool): Whether to include JavaScript files (default: False)\n            - css_framework (Optional[str]): CSS framework to use ('bootstrap', 'tailwind', or None) (default: None)\n            - author (Optional[str]): Author name for meta tags (default: None)\n\n    Returns:\n        Dict[str, Any]: A dictionary containing:\n            - project_root: The root directory name\n            - files_created: List of files that would be created\n            - html_content: Generated HTML content\n            - css_content: Generated CSS content\n            - js_content: Optional generated JS content\n            - status: 'success' or 'error'\n            - message: Additional status message\n\n    Examples:\n        >>> create_a_simple_website_with_html_and_css_1752556793({\n        ...     'project_name': 'my_portfolio',\n        ...     'include_js': True\n        ... })\n    \"\"\"\n    try:\n        # Default configuration\n        default_config = {\n            'project_name': 'my_website',\n            'include_js': False,\n            'css_framework': None,\n            'author': None\n        }\n\n        # Merge provided config with defaults\n        if config is None:\n            config = default_config\n        else:\n            for key in default_config:\n                if key not in config:\n                    config[key] = default_config[key]\n\n        # Validate project name\n        project_name = config['project_name'].strip()\n        if not project_name:\n            raise ValueError(\"Project name cannot be empty\")\n\n        # Generate file structure\n        files_created = ['index.html', 'css/style.css']\n        if config['include_js']:\n            files_created.append('js/main.js')\n\n        # Generate HTML boilerplate\n        html_content = f\"\"\"<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>{project_name}</title>\n    <link rel=\"stylesheet\" href=\"css/style.css\">\n    {f'<!-- Using {config[\"css_framework\"]} framework -->' if config[\"css_framework\"] else ''}\n    {f'<meta name=\"author\" content=\"{config[\"author\"]}\">' if config[\"author\"] else ''}\n</head>\n<body>\n    <header>\n        <h1>Welcome to {project_name}</h1>\n    </header>\n    <main>\n        <p>This page was generated on {datetime.datetime.now().strftime('%Y-%m-%d')}</p>\n    </main>\n    {f'<script src=\"js/main.js\"></script>' if config['include_js'] else ''}\n</body>\n</html>\"\"\"\n\n        # Generate CSS boilerplate\n        css_framework = config['css_framework']\n        css_content = \"\"\n        if css_framework == 'bootstrap':\n            css_content = \"\"\"/* Using Bootstrap-inspired styles */\n.container {\n    max-width: 1140px;\n    margin: 0 auto;\n    padding: 0 15px;\n}\"\"\"\n        elif css_framework == 'tailwind':\n            css_content = \"\"\"/* Using Tailwind-inspired utility classes */\n.flex {\n    display: flex;\n}\n.justify-center {\n    justify-content: center;\n}\"\"\"\n        else:\n            css_content = f\"\"\"/* Basic styles for {project_name} */\nbody {{\n    font-family: Arial, sans-serif;\n    line-height: 1.6;\n    margin: 0;\n    padding: 20px;\n    color: #333;\n}}\n\nheader {{\n    background-color: #f4f4f4;\n    padding: 20px;\n    text-align: center;\n}}\"\"\"\n\n        # Generate JS boilerplate if needed\n        js_content = \"\"\n        if config['include_js']:\n            js_content = f\"\"\"// JavaScript for {project_name}\ndocument.addEventListener('DOMContentLoaded', function() {{\n    console.log('{project_name} loaded');\n}});\"\"\"\n\n        return {\n            'project_root': f\"{project_name}/\",\n            'files_created': files_created,\n            'html_content': html_content,\n            'css_content': css_content,\n            'js_content': js_content if config['include_js'] else None,\n            'status': 'success',\n            'message': 'Project structure and boilerplate generated successfully'\n        }\n\n    except Exception as e:\n        return {\n            'project_root': '',\n            'files_created': [],\n            'html_content': '',\n            'css_content': '',\n            'js_content': None,\n            'status': 'error',\n            'message': str(e)\n        }",
+      "code": null,
       "description": "Creates a complete web project structure with HTML, CSS, and optional JavaScript files. Generates proper file structure and boilerplate code.",
       "task_origin": "Auto-generated for: Creates a complete web project structure with HTML, CSS, and optional JavaScript files. Generates proper file structure and boilerplate code.",
       "code_hash": "0b8572ba950d63366f967594b3bb9bce",
       "created_at": "2025-07-15T13:23:17.338125",
       "updated_at": "2025-07-15T13:23:17.338125",
-      "version": 1
+      "version": 1,
+      "storage_type": "complex",
+      "complexity": {
+        "line_count": 122,
+        "char_count": 4758,
+        "import_count": 2,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 78,
+        "complexity_score": 179.57999999999998
+      },
+      "code_file": "E:\\E5Agent\\memory\\functions\\complex\\create_a_simple_website_with_html_and_css_1752556793.py"
+    },
+    "test_simple_function": {
+      "name": "test_simple_function",
+      "description": "测试用的简单加法函数",
+      "task_origin": "hybrid_storage_test",
+      "code_hash": "8ad77bfd27708cfdae4cb1ebfb698566",
+      "created_at": "2025-07-15T13:59:01.919690",
+      "updated_at": "2025-07-15T13:59:01.919690",
+      "version": 1,
+      "storage_type": "simple",
+      "complexity": {
+        "line_count": 3,
+        "char_count": 85,
+        "import_count": 0,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 3,
+        "complexity_score": 3.85
+      },
+      "code": "\ndef test_simple_function(x: int, y: int) -> int:\n    \"\"\"简单的加法函数\"\"\"\n    return x + y\n"
+    },
+    "test_complex_function": {
+      "name": "test_complex_function",
+      "description": "测试用的复杂数据处理函数",
+      "task_origin": "hybrid_storage_test",
+      "code_hash": "5e0a817a857355439ce77ad751d353c8",
+      "created_at": "2025-07-15T13:59:01.959855",
+      "updated_at": "2025-07-15T13:59:01.959855",
+      "version": 1,
+      "storage_type": "complex",
+      "complexity": {
+        "line_count": 54,
+        "char_count": 2165,
+        "import_count": 4,
+        "class_count": 0,
+        "function_count": 0,
+        "docstring_lines": 6,
+        "complexity_score": 95.65
+      },
+      "code_file": "E:\\E5Agent\\memory\\functions\\complex\\test_complex_function.py",
+      "code": null
     }
   },
   "metadata": {
-    "last_updated": "2025-07-15T13:23:17.371871",
+    "last_updated": "2025-07-15T13:59:01.962858",
     "version": "2.0",
-    "total_functions": 11
+    "total_functions": 13
   }
 }
