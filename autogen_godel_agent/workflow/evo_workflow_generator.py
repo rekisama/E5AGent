@@ -325,7 +325,13 @@ Your task is to design an agent that can effectively handle the given subtask wi
         try:
             # Use task planner's LLM call method
             response = await self.task_planner._call_llm(agent_prompt, system_message)
-            agent_data = json.loads(response)
+
+            # Parse JSON response using robust extraction
+            from tools.json_utils import extract_and_parse_json
+            agent_data = extract_and_parse_json(response)
+
+            if agent_data is None:
+                raise ValueError(f"Failed to extract valid JSON from response: {response[:200]}...")
             
             # Add LLM config
             agent_data["llm_config"] = self.llm_config

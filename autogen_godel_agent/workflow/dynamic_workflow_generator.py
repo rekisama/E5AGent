@@ -264,9 +264,13 @@ Always respond with valid JSON in the exact format specified."""
             # Use LLM for intelligent analysis
             response = await self._call_llm(analysis_prompt, system_message)
 
-            # Parse JSON response
-            import json
-            analysis = json.loads(response)
+            # Parse JSON response using robust extraction
+            from tools.json_utils import extract_and_parse_json
+            analysis = extract_and_parse_json(response)
+
+            if analysis is None:
+                logger.warning("Failed to extract valid JSON from LLM response, using fallback")
+                return self._get_default_analysis()
 
             # Validate the response
             if self._validate_analysis(analysis):

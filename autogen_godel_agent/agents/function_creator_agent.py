@@ -290,7 +290,7 @@ Always validate functions and consider dialogue-based improvement before registr
             user_proxy = autogen.UserProxyAgent(
                 name="temp_user",
                 human_input_mode="NEVER",
-                max_consecutive_auto_reply=1,
+                max_consecutive_auto_reply=10,  # Increased from 1 to 10
                 code_execution_config=False,
             )
 

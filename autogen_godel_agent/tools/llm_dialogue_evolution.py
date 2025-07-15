@@ -211,7 +211,7 @@ class LLMDialogueEvolution:
         group_chat = autogen.GroupChat(
             agents=agents_list,
             messages=[],
-            max_round=max_rounds,
+            max_round=max(max_rounds, 30),  # Ensure minimum 30 rounds
             speaker_selection_method="round_robin"
         )
         

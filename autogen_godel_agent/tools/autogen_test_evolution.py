@@ -284,7 +284,7 @@ class AutoGenTestEvolution:
             group_chat = autogen.GroupChat(
                 agents=agents_list,
                 messages=[],
-                max_round=20,
+                max_round=50,  # Increased from 20 to 50
                 speaker_selection_method="round_robin"
             )
             

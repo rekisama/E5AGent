@@ -31,6 +31,15 @@ class TaskParameter:
     description: str
     required: bool = True
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            'name': self.name,
+            'type': self.type,
+            'description': self.description,
+            'required': self.required
+        }
+
 
 @dataclass
 class EvoWorkflowNode:
@@ -47,14 +56,21 @@ class EvoWorkflowNode:
         """Convert to dictionary representation."""
         ignore = ignore or []
         result = {}
-        
+
         for key, value in self.__dict__.items():
             if key not in ignore:
-                if isinstance(value, list) and value and hasattr(value[0], 'to_dict'):
-                    result[key] = [item.to_dict() for item in value]
+                if isinstance(value, list) and value:
+                    # Handle list of objects with to_dict method
+                    if hasattr(value[0], 'to_dict'):
+                        result[key] = [item.to_dict() for item in value]
+                    else:
+                        result[key] = value
+                elif hasattr(value, 'to_dict'):
+                    # Handle single object with to_dict method
+                    result[key] = value.to_dict()
                 else:
                     result[key] = value
-        
+
         return result
     
     def set_agents(self, agents: List[Dict[str, Any]]):
@@ -92,9 +108,11 @@ class EvoWorkflowGraph:
     while adapting it for our AutoGen integration.
     """
     
-    def __init__(self, goal: str, nodes: List[EvoWorkflowNode] = None, 
+    def __init__(self, goal: str, nodes: List[EvoWorkflowNode] = None,
                  edges: List[EvoWorkflowEdge] = None):
         self.goal = goal
+        self.name = f"evo_workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"  # Add name attribute
+        self.workflow_type = "evo_workflow"  # Add workflow_type attribute
         self.nodes = nodes or []
         self.edges = edges or []
         self.id = f"evo_workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -248,9 +266,13 @@ Always respond with valid JSON in the exact format specified."""
         try:
             # Use LLM for task planning
             response = await self._call_llm(planning_prompt, system_message)
-            
-            # Parse JSON response
-            planning_data = json.loads(response)
+
+            # Parse JSON response using robust extraction
+            from tools.json_utils import extract_and_parse_json
+            planning_data = extract_and_parse_json(response)
+
+            if planning_data is None:
+                raise ValueError(f"Failed to extract valid JSON from response: {response[:200]}...")
             
             # Convert to EvoWorkflowNode objects
             sub_tasks = []

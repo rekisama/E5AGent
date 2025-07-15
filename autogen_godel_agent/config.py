@@ -35,9 +35,20 @@ class Config:
         MAX_FUNCTION_GENERATION_ATTEMPTS = 3
 
     try:
-        FUNCTION_TEST_TIMEOUT = int(os.getenv("FUNCTION_TEST_TIMEOUT", "30"))
+        FUNCTION_TEST_TIMEOUT = int(os.getenv("FUNCTION_TEST_TIMEOUT", "120"))
     except ValueError:
-        FUNCTION_TEST_TIMEOUT = 30
+        FUNCTION_TEST_TIMEOUT = 120
+
+    # === AutoGen Conversation Settings ===
+    try:
+        MAX_CONSECUTIVE_AUTO_REPLY = int(os.getenv("MAX_CONSECUTIVE_AUTO_REPLY", "50"))
+    except ValueError:
+        MAX_CONSECUTIVE_AUTO_REPLY = 50
+
+    try:
+        MAX_GROUP_CHAT_ROUNDS = int(os.getenv("MAX_GROUP_CHAT_ROUNDS", "100"))
+    except ValueError:
+        MAX_GROUP_CHAT_ROUNDS = 100
 
     # === File Paths ===
     FUNCTION_REGISTRY_FILE = "memory/function_registry.json"
@@ -100,7 +111,7 @@ class Config:
                     }
                 ],
                 "temperature": 0.1,
-                "timeout": 120,
+                "timeout": 600,
             }
         elif cls.AZURE_OPENAI_API_KEY and cls.AZURE_OPENAI_ENDPOINT:
             # Use Azure OpenAI
@@ -115,7 +126,7 @@ class Config:
                     }
                 ],
                 "temperature": 0.1,
-                "timeout": 120,
+                "timeout": 600,
             }
         elif cls.OPENAI_API_KEY:
             # Use OpenAI
@@ -127,7 +138,7 @@ class Config:
                     }
                 ],
                 "temperature": 0.1,
-                "timeout": 120,
+                "timeout": 600,
             }
         else:
             raise ValueError("No valid API key found. Please set DEEPSEEK_API_KEY, OPENAI_API_KEY or Azure OpenAI credentials.")

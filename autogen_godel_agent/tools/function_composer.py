@@ -1840,6 +1840,9 @@ class FunctionComposer:
                 "temperature": 0.7
             }
 
+        # 保存LLM配置为实例属性
+        self.llm_config = llm_config
+
         # 初始化组件
         keyword_config_path = config.get('keyword_config_path')
         enable_llm_matching = config.get('enable_llm_matching', True)  # 默认启用LLM匹配

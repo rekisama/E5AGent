@@ -309,7 +309,7 @@ class EvoWorkflowExecutor:
             user_proxy = autogen.UserProxyAgent(
                 name=f"user_proxy_{node.name}",
                 human_input_mode="NEVER",
-                max_consecutive_auto_reply=1,
+                max_consecutive_auto_reply=20,  # Increased from 1 to 20
                 code_execution_config=False
             )
             
