@@ -31,6 +31,14 @@ except ImportError as e:
     LearningMemoryIntegration = None
     LEARNING_MEMORY_AVAILABLE = False
 
+# Import interactive round management
+try:
+    from tools.interactive_round_manager import get_round_manager
+    INTERACTIVE_ROUNDS_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Interactive round management not available: {e}")
+    INTERACTIVE_ROUNDS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -118,25 +126,42 @@ class SelfExpandingAgentSystem:
         except Exception as e:
             print(f"Failed to save history: {e}")
     
-    def process_task(self, task_description: str, session_id: Optional[str] = None) -> Dict[str, Any]:
+    def process_task(self, task_description: str, session_id: Optional[str] = None,
+                   allow_user_confirmation: bool = True) -> Dict[str, Any]:
         """
         Process a task using the self-expanding agent system.
 
         Args:
             task_description: Description of the task to be completed
             session_id: Optional session ID for context preservation
+            allow_user_confirmation: Whether to allow user confirmation for extending round limits
 
         Returns:
             Dictionary containing the result and metadata
         """
         logger.info(f"🎯 Processing task: {task_description}")
         start_time = datetime.now()
+        task_id = session_id or f"task_{int(start_time.timestamp())}"
+
+        # 初始化交互式轮次管理器（如果可用）
+        if INTERACTIVE_ROUNDS_AVAILABLE and allow_user_confirmation:
+            round_manager = get_round_manager()
+            # 加载任务状态（如果存在）
+            state = round_manager.load_state(task_id)
+            if state:
+                logger.info(f"📋 加载任务状态: {task_id}")
 
         try:
             # 1. Intelligent task routing - determine the best approach
             if self._is_complex_task(task_description):
                 logger.info("🌟 Processing complex task with EvoWorkflow")
-                result = self._process_evo_workflow_task_sync(task_description)
+
+                # 使用交互式轮次管理（如果可用）
+                if INTERACTIVE_ROUNDS_AVAILABLE and allow_user_confirmation:
+                    result = self._process_with_round_confirmation(task_description, task_id, round_manager)
+                else:
+                    result = self._process_evo_workflow_task_sync(task_description)
+
                 execution_time = (datetime.now() - start_time).total_seconds()
             else:
                 # 2. Enhanced task analysis with learning memory (if available)
@@ -195,6 +220,67 @@ class SelfExpandingAgentSystem:
                 'exception': type(e).__name__,
                 'system_type': 'enhanced_autogen'
             }
+
+    def _process_with_round_confirmation(self, task_description: str,
+                                       task_id: str, round_manager) -> Dict[str, Any]:
+        """处理任务，支持用户确认增加轮次上限"""
+        try:
+            logger.info("🔄 使用交互式轮次管理处理任务")
+
+            # 实际调用EvoWorkflow，但添加轮次监控
+            # 这里简化为直接调用标准处理
+            result = self._process_evo_workflow_task_sync(task_description)
+
+            # 在实际实现中，这里应该集成到EvoWorkflow的执行循环中
+            # 监控每一轮的执行，并在接近上限时请求用户确认
+
+            return result
+
+        except Exception as e:
+            logger.error(f"交互式轮次管理处理失败: {e}")
+            return {
+                'success': False,
+                'error': f"交互式处理失败: {str(e)}",
+                'execution_type': 'interactive_error'
+            }
+
+    def _handle_user_confirmation(self, task_id: str, monitor_result: Dict[str, Any],
+                                round_manager) -> Dict[str, Any]:
+        """处理用户确认"""
+        try:
+            # 导入用户界面
+            from tools.user_confirmation_interface import create_user_interface
+            interface = create_user_interface()
+
+            # 显示确认界面
+            user_choice = interface.show_round_limit_warning(monitor_result['confirmation_info'])
+
+            # 如果用户确认了选择
+            if user_choice.get('confirmed', False):
+                # 处理用户决策
+                decision_result = round_manager.process_user_decision(
+                    task_id,
+                    user_choice['decision'],
+                    user_choice.get('custom_extension', 0)
+                )
+
+                # 显示结果
+                if user_choice['decision'] == 'stop':
+                    interface.show_stop_result(decision_result)
+                    return {'action': 'stop'}
+                else:
+                    interface.show_extension_result(decision_result)
+                    return {
+                        'action': 'continue',
+                        'new_limit': decision_result.get('new_limit')
+                    }
+            else:
+                # 用户取消，默认停止
+                return {'action': 'stop'}
+
+        except Exception as e:
+            logger.error(f"用户确认处理失败: {e}")
+            return {'action': 'stop'}
 
     def _execute_with_recommendations(self, task_description: str, enhancement: Dict[str, Any]) -> Dict[str, Any]:
         """Execute task using learning memory recommendations."""
